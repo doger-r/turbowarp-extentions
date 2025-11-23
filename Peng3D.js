@@ -107,7 +107,7 @@
 
             // 3. Init Physics
             this.world = new CANNON.World();
-            this.world.gravity.set(0, -9.82, 0);
+            this.world.gravity.set(0, -30, 0);
             this.world.broadphase = new CANNON.NaiveBroadphase();
             this.world.solver.iterations = 10; 
             
@@ -693,7 +693,7 @@
                     '---',
                     { opcode: 'enablePhysics', blockType: Scratch.BlockType.COMMAND, text: 'enable physics for [NAME]', arguments: { NAME: { type: Scratch.ArgumentType.STRING, defaultValue: 'Object1' } } },
                     { opcode: 'stepPhysics', blockType: Scratch.BlockType.COMMAND, text: 'step physics simulation' },
-                    { opcode: 'setGravity', blockType: Scratch.BlockType.COMMAND, text: 'set gravity to [GRAV]', arguments: { GRAV: { type: Scratch.ArgumentType.NUMBER, defaultValue: -9.8 } } },
+                    { opcode: 'setGravity', blockType: Scratch.BlockType.COMMAND, text: 'set gravity to [GRAV]', arguments: { GRAV: { type: Scratch.ArgumentType.NUMBER, defaultValue: -30 } } },
                     { opcode: 'setPhysProp', blockType: Scratch.BlockType.COMMAND, text: 'set [NAME] [PROP] to [VAL]', arguments: { NAME: { type: Scratch.ArgumentType.STRING, defaultValue: 'Object1' }, PROP: { type: Scratch.ArgumentType.STRING, menu: 'physProps', defaultValue: 'bounciness' }, VAL: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.5 } } },
                     { opcode: 'pushObject', blockType: Scratch.BlockType.COMMAND, text: 'push [NAME] with force x:[X] y:[Y] z:[Z]', arguments: { NAME: { type: Scratch.ArgumentType.STRING, defaultValue: 'Object1' }, X: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 }, Y: { type: Scratch.ArgumentType.NUMBER, defaultValue: 10 }, Z: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 } } },
                     { opcode: 'getTouching', blockType: Scratch.BlockType.REPORTER, text: 'get objects touching [NAME]', arguments: { NAME: { type: Scratch.ArgumentType.STRING, defaultValue: 'Object1' } } },
