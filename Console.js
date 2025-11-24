@@ -2,7 +2,7 @@
   'use strict';
 
   /**
-   * Console Extension v3 (Modified)
+   * Console Extension v4 (Modified)
    * * Features:
    * - Advanced Logging (Text, Gradients, Images)
    * - Individual Line Styling (Font, Size, Align overrides)
@@ -10,6 +10,8 @@
    * - IntersectionObserver based rendering
    * - Timestamps (Relative/Absolute)
    * - Smart Image Scaling (0 width/height logic)
+   * - Image Roundness (border-radius)
+   * - Vertical Spacing Block (non-line)
    */
 
   const BlockType = (Scratch && Scratch.BlockType) ? Scratch.BlockType : {
@@ -35,7 +37,7 @@
       this.stage = null;
 
       // data
-      // entries: { id, type, text?, src?, width?, height?, colorRaw, ts, customFont?, customSize?, customAlign? }
+      // entries: { id, type, text?, src?, width?, height?, roundness?, spacingHeight?, colorRaw, ts, customFont?, customSize?, customAlign? }
       this._consoleCache = []; 
       this._nextId = 1;
       this._inputCache = '';
@@ -94,7 +96,7 @@
 
       // bind exported methods
       const methods = [
-        'getInfo','toggleConsole','showConsole','hideConsole','clearConsole','logMessage','logDots','logImage','removeLine',
+        'getInfo','toggleConsole','showConsole','hideConsole','clearConsole','logMessage','logDots','logImage','logSpacing','removeLine',
         'styleLine', // New method
         'getConsoleAsArray','setConsoleFromArray','getConsoleLineCount','isConsoleShown','setSelectable',
         'setTimestampFormat','toggleInput','showInput','hideInput','setInputText','runInput','clearInput','setLogInput',
@@ -124,13 +126,15 @@
           { opcode: 'clearConsole', blockType: BlockType.COMMAND, text: 'clear console' },
           { opcode: 'logMessage', blockType: BlockType.COMMAND, text: 'log [TEXT] in color [COLOR]', arguments: { TEXT: { type: ArgumentType.STRING, defaultValue: 'Hello!' }, COLOR: { type: ArgumentType.COLOR, defaultValue: '#FFFFFF' } } },
           
-          // MODIFIED: Defaults for W and H set to 0
-          { opcode: 'logImage', blockType: BlockType.COMMAND, text: 'log image [SRC] size [W] x [H]', arguments: { SRC: { type: ArgumentType.STRING, defaultValue: 'https://scv.scratch.mit.edu/da8ed626bf4c64df753823e590740662.svg' }, W: { type: ArgumentType.NUMBER, defaultValue: 0 }, H: { type: ArgumentType.NUMBER, defaultValue: 0 } } },
+          // MODIFIED: Added ROUNDNESS parameter
+          { opcode: 'logImage', blockType: BlockType.COMMAND, text: 'log image [SRC] size [W] x [H] roundness [R]', arguments: { SRC: { type: ArgumentType.STRING, defaultValue: 'https://scv.scratch.mit.edu/da8ed626bf4c64df753823e590740662.svg' }, W: { type: ArgumentType.NUMBER, defaultValue: 0 }, H: { type: ArgumentType.NUMBER, defaultValue: 0 }, R: { type: ArgumentType.NUMBER, defaultValue: 4 } } },
           
           { opcode: 'logDots', blockType: BlockType.COMMAND, text: 'log dots' },
+          // NEW BLOCK: Vertical Spacing
+          { opcode: 'logSpacing', blockType: BlockType.COMMAND, text: 'add [HEIGHT] px vertical spacing', arguments: { HEIGHT: { type: ArgumentType.NUMBER, defaultValue: 10 } } },
+          
           { opcode: 'removeLine', blockType: BlockType.COMMAND, text: 'remove console line [INDEX]', arguments: { INDEX: { type: ArgumentType.NUMBER, defaultValue: 1 } } },
 
-          // New Styling Block
           { opcode: 'styleLine', blockType: BlockType.COMMAND, text: 'style line [INDEX] font [FONT] size [SIZE] align [ALIGN]', arguments: { INDEX: { type: ArgumentType.NUMBER, defaultValue: 1 }, FONT: { type: ArgumentType.STRING, defaultValue: 'Sans Serif' }, SIZE: { type: ArgumentType.NUMBER, defaultValue: 1 }, ALIGN: { type: ArgumentType.STRING, menu: 'alignmentMenu', defaultValue: 'left' } } },
 
           { opcode: 'getConsoleAsArray', blockType: BlockType.REPORTER, text: 'get console JSON' },
@@ -194,11 +198,15 @@
       style.textContent = `
         .consoleOverlay, .consoleOverlay * { scrollbar-width: none; -ms-overflow-style: none; }
         .consoleOverlay::-webkit-scrollbar, .consoleOverlay *::-webkit-scrollbar { display: none; }
+        /* console-line is used for text/image/dots, console-spacing is for spacing block */
         .console-line { white-space: pre-wrap; word-break: break-word; display: block; }
+        .console-spacing { width: 100%; display: block; } 
+
         .console-input { outline: none !important; box-shadow: none !important; border: none !important; background-repeat: no-repeat; }
         .console-input::placeholder { color: var(--console-input-placeholder-color, ${this._defaults.inputPlaceholderColorRaw}) !important; opacity: 1 !important; }
         .console-line span { vertical-align: middle; }
-        .console-img { vertical-align: middle; max-width: 100%; border-radius: 4px; }
+        .console-img { vertical-align: middle; max-width: 100%; } /* border-radius applied inline */
+        
         /* Suggestion Box Styles */
         .console-suggestions {
           position: absolute;
@@ -316,6 +324,8 @@
       // Resize all lines in logArea
       if (this.logArea) {
         for (const line of Array.from(this.logArea.children)) {
+          if (line.classList.contains('console-spacing')) continue; // Skip spacing elements
+          
           // Check for line-specific multiplier override
           const lineMult = line.dataset.sizeMult ? Number(line.dataset.sizeMult) : (this.style.sizeText || 1);
           const linePx = Math.max(10, base * scale * lineMult);
@@ -621,6 +631,15 @@
     // ---- DOM Element Creation & Styling ----
 
     _createLineElement (entry) {
+      if (entry.type === 'spacing') {
+        const spacer = document.createElement('div');
+        spacer.className = 'console-spacing';
+        // Use margin-top to separate, maintaining padding from consoleOverlay
+        spacer.style.marginTop = `${Math.max(0, Number(entry.spacingHeight) || 0)}px`;
+        spacer.dataset.id = String(entry.id);
+        return spacer;
+      }
+
       const container = document.createElement('div');
       container.className = 'console-line';
       container.style.lineHeight = String(this.style.lineSpacing || this._defaults.lineSpacing);
@@ -642,9 +661,10 @@
         img.className = 'console-img';
         img.src = entry.src;
         
-        // --- MODIFIED SCALING LOGIC ---
+        // --- SCALING LOGIC ---
         const valW = Number(entry.width) || 0;
         const valH = Number(entry.height) || 0;
+        const roundness = Math.max(0, Number(entry.roundness) || 4); // Use default of 4px
 
         if (valW === 0 && valH === 0) {
             // Both 0 -> Native resolution (auto)
@@ -663,7 +683,9 @@
             img.style.width = `${valW}px`;
             img.style.height = `${valH}px`;
         }
-        // -----------------------------
+        
+        // --- ROUNDNESS ---
+        img.style.borderRadius = `${roundness}px`;
         
         container.appendChild(img);
       } else {
@@ -738,7 +760,10 @@
       this.logArea.appendChild(el);
 
       if (this._timestampFormat === 'relative' && this._io) {
-        try { this._io.observe(el); } catch (e) {}
+        // Only observe if it's a regular line (not spacing)
+        if (entry.type !== 'spacing') {
+            try { this._io.observe(el); } catch (e) {}
+        }
       }
 
       this._resizeDynamicSizes(); // This will apply the correct pixel size based on dataset.sizeMult
@@ -779,8 +804,27 @@
     }
     logMessage (args) { this._log(args.TEXT, args.COLOR); }
     
+    // MODIFIED: Added ROUNDNESS parameter
     logImage (args) {
-        const entry = { id: this._nextId++, type: 'image', src: String(args.SRC), width: args.W, height: args.H, ts: Date.now() };
+        const entry = { id: this._nextId++, type: 'image', src: String(args.SRC), width: args.W, height: args.H, roundness: args.R, ts: Date.now() };
+        this._consoleCache.push(entry);
+        if (this._dotsInterval) this._stopDots();
+        this._addLineToDOM(entry);
+    }
+
+    // NEW BLOCK: logSpacing
+    logSpacing(args) {
+        const height = Math.max(0, Number(args.HEIGHT) || 0);
+        if (height === 0) return;
+
+        // Check the last entry to prevent double spacing
+        const lastEntry = this._consoleCache[this._consoleCache.length - 1];
+        if (lastEntry && lastEntry.type === 'spacing') {
+            // Already a spacing block, skip adding another one
+            return;
+        }
+
+        const entry = { id: this._nextId++, type: 'spacing', spacingHeight: height };
         this._consoleCache.push(entry);
         if (this._dotsInterval) this._stopDots();
         this._addLineToDOM(entry);
@@ -791,8 +835,8 @@
         const visibleIndex = Math.floor(Number(args.INDEX) || 1);
         const idx = visibleIndex - 1;
 
-        // Validation
-        if (idx < 0 || idx >= this._consoleCache.length) return;
+        // Validation: Index must be valid and line type must not be 'spacing'
+        if (idx < 0 || idx >= this._consoleCache.length || this._consoleCache[idx].type === 'spacing') return;
 
         const entry = this._consoleCache[idx];
         
@@ -812,7 +856,12 @@
         }
     }
 
-    clearConsole () { this._consoleCache = []; if (this.logArea) this.logArea.innerHTML = ''; this._scrollCache = 0; }
+    clearConsole () { 
+        this._consoleCache = []; 
+        if (this.logArea) this.logArea.innerHTML = ''; 
+        this._scrollCache = 0; 
+        this._disconnectObserverAndLoop(); // Also clear IO
+    }
 
     logDots () {
       if (!this.consoleVisible && !this.logArea) return;
@@ -858,29 +907,58 @@
     }
 
     // ---- persistence ----
-    getConsoleAsArray () { try { return JSON.stringify(this._consoleCache); } catch (e) { return '[]'; } }
+    getConsoleAsArray () { 
+      try { 
+        // Filter out temporary/internal data like _dotsElement state if it were accidentally saved
+        return JSON.stringify(this._consoleCache); 
+      } catch (e) { 
+        return '[]'; 
+      } 
+    }
     setConsoleFromArray (args) {
       try {
         const arr = JSON.parse(String(args.ARRAY || '[]'));
         if (!Array.isArray(arr)) return;
-        this._consoleCache = arr.map(e => ({
-          id: e.id ? Number(e.id) : this._nextId++,
-          type: e.type || 'text',
-          text: String(e.text || ''),
-          src: e.src, width: e.width, height: e.height,
-          colorRaw: String(e.colorRaw || '#FFFFFF'),
-          ts: e.ts ? Number(e.ts) : Date.now(),
-          customFont: e.customFont,
-          customSize: e.customSize,
-          customAlign: e.customAlign
-        }));
+
+        this._consoleCache = arr.map(e => {
+            const base = {
+                id: e.id ? Number(e.id) : this._nextId++,
+                type: e.type || 'text',
+                ts: e.ts ? Number(e.ts) : Date.now(),
+            };
+
+            if (base.type === 'spacing') {
+                return Object.assign(base, {
+                    spacingHeight: Number(e.spacingHeight) || 0,
+                });
+            }
+
+            // Default for text/image
+            return Object.assign(base, {
+                text: String(e.text || ''),
+                src: e.src, 
+                width: e.width, 
+                height: e.height,
+                roundness: e.roundness, // NEW
+                colorRaw: String(e.colorRaw || '#FFFFFF'),
+                customFont: e.customFont,
+                customSize: e.customSize,
+                customAlign: e.customAlign
+            });
+        });
+
         const maxId = this._consoleCache.reduce((m, x) => Math.max(m, x.id || 0), 0);
         this._nextId = Math.max(this._nextId, maxId + 1);
         if (this.logArea) this._restoreConsoleCache();
-      } catch (e) {}
+      } catch (e) {
+          console.error('Failed to load console from JSON:', e);
+      }
     }
 
-    getConsoleLineCount () { return this._consoleCache.length; }
+    getConsoleLineCount () { 
+        // Only count visible lines (text, image, dots)
+        return this._consoleCache.filter(e => e.type !== 'spacing').length; 
+    }
     isConsoleShown () { return !!this.consoleVisible; }
     setSelectable (args) { this.textSelectable = !!args.SELECTABLE; if (this.consoleOverlay) this.consoleOverlay.style.userSelect = this.textSelectable ? 'text' : 'none'; }
 
@@ -923,6 +1001,7 @@
     _refreshTimestamps () {
       if (!this.logArea) return;
       for (const c of Array.from(this.logArea.children)) {
+        if (c.classList.contains('console-spacing')) continue;
         const ts = Number(c.dataset.ts || 0);
         const formatted = (this._timestampFormat === 'off') ? '' : this._formatTimestamp(ts);
         const spans = c.querySelectorAll('span');
@@ -951,7 +1030,19 @@
       this._startVisibleUpdateLoop();
     }
 
-    _observeAllLines () { if (!this.logArea) return; if (this._io) for (const c of Array.from(this.logArea.children)) { try { this._io.observe(c); } catch (e) {} } else this._updateVisibleLinesNow(); }
+    _observeAllLines () { 
+        if (!this.logArea) return; 
+        if (this._io) {
+            for (const c of Array.from(this.logArea.children)) { 
+                // Only observe if it's a regular line (not spacing)
+                if (c.classList.contains('console-line')) {
+                    try { this._io.observe(c); } catch (e) {} 
+                }
+            } 
+        } else {
+            this._updateVisibleLinesNow();
+        }
+    }
     _disconnectObserverAndLoop () { try { if (this._io) { this._io.disconnect(); this._io = null; } } catch (e) {} this._stopVisibleUpdateLoop(); this._visibleSet.clear(); }
     _updateTimestampForElement (el) {
       if (!el) return;
@@ -968,6 +1059,7 @@
       if (!this.logArea) return;
       const areaRect = this.logArea.getBoundingClientRect();
       for (const c of Array.from(this.logArea.children)) {
+        if (c.classList.contains('console-spacing')) continue;
         try {
           const r = c.getBoundingClientRect();
           const intersects = !(r.bottom < areaRect.top || r.top > areaRect.bottom);
@@ -997,6 +1089,7 @@
         this.style.timestampTextRaw = colorArg || parsed.color;
         if (this.logArea) {
           for (const ch of Array.from(this.logArea.children)) {
+            if (ch.classList.contains('console-spacing')) continue;
             const tsSpan = ch.querySelectorAll('span')[0];
             if (tsSpan) this._applyInlineTextColor(tsSpan, this.style.timestampTextRaw);
           }
@@ -1018,6 +1111,7 @@
 
       if (this.logArea) {
         for (const ch of Array.from(this.logArea.children)) {
+          if (ch.classList.contains('console-spacing')) continue;
           const spans = ch.querySelectorAll('span');
           if (spans.length === 0) continue;
           if (part === 'timestamp' && spans[0]) spans[0].style.fontFamily = this.style.fontTimestamp;
@@ -1049,6 +1143,7 @@
 
       if (this.logArea && part === 'text') {
         for (const ch of Array.from(this.logArea.children)) {
+            if (ch.classList.contains('console-spacing')) continue;
             const entry = this._consoleCache.find(e => String(e.id) === ch.dataset.id);
             if (!entry || !entry.customAlign) ch.style.textAlign = this.style.textAlign;
         }
