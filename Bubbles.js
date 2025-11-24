@@ -432,7 +432,7 @@
             costume.skinId = bubbleSkinId;
             
             // FORCE UPDATE: Tell the renderer explicitly to use the new skin ID for this target
-            renderer.updateDrawableSkin(target.drawableID, bubbleSkinId);
+            target.updateAllDrawableProperties();
             
             // Trigger a visual update for bounds/collision
             target.emit('TARGET_WAS_DRAGGED');
