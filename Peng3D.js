@@ -26,6 +26,9 @@
             this.world = null;
             this.bodyToName = new Map();
             this.raycaster = null;
+            
+            // Physics Time Step Tracking
+            this._lastPhysTime = 0;
 
             // Render State
             this.renderPending = false;
@@ -107,13 +110,10 @@
 
             // 3. Init Physics
             this.world = new CANNON.World();
-            // IMPROVEMENT: Increased gravity for snappier feel
-            this.world.gravity.set(0, -50, 0);
+            // UPDATED: Default gravity set to Earth standard -9.8
+            this.world.gravity.set(0, -9.8, 0);
             this.world.broadphase = new CANNON.NaiveBroadphase();
-            // IMPROVEMENT: Increased iterations for better stability at high speeds
-            this.world.solver.iterations = 20; 
-            // IMPROVEMENT: Allow bodies to sleep to improve performance and stability
-            this.world.allowSleep = true;
+            this.world.solver.iterations = 10; 
             
             this._defaultPhysMaterial = new CANNON.Material("default");
             const defaultContact = new CANNON.ContactMaterial(this._defaultPhysMaterial, this._defaultPhysMaterial, {
@@ -299,6 +299,8 @@
             Object.keys(this.objects).forEach(name => this._disposeObject(this.objects[name], name));
             this.activeCamera = null;
             this.renderer.clear();
+            // Reset physics timer so next start doesn't have huge delta time
+            this._lastPhysTime = 0;
             this._requestRender();
         }
 
@@ -535,11 +537,24 @@
             if (!this.loaded) return this._check().then(() => this.stepPhysics());
             if (!this.world) return;
             
-            // IMPROVEMENT: Step at 1/30 (30FPS) instead of 1/60.
-            // Scratch loops typically run at 30 times per second. 
-            // If we step 1/60th of a second only 30 times a second, time moves at 50% speed.
-            // Stepping 1/30 makes gravity and physics feel "Real Time".
-            this.world.step(1/30);
+            // Automatic Delta Time Calculation
+            const now = performance.now();
+            if (this._lastPhysTime === 0) {
+                this._lastPhysTime = now;
+                // Skip the very first step to establish a time baseline, 
+                // preventing huge jumps if loaded long after page start.
+                return;
+            }
+
+            // Calculate seconds elapsed since last frame
+            const dt = (now - this._lastPhysTime) / 1000;
+            this._lastPhysTime = now;
+
+            // Step the world
+            // 1st arg: Fixed time step (ideal physics tick)
+            // 2nd arg: Time elapsed since last call
+            // 3rd arg: Max sub-steps to catch up (prevents spiral of death)
+            this.world.step(1/60, dt, 10);
 
             const bodies = this.physicsBodies;
             const objs = this.objects;
@@ -701,7 +716,8 @@
                     '---',
                     { opcode: 'enablePhysics', blockType: Scratch.BlockType.COMMAND, text: 'enable physics for [NAME]', arguments: { NAME: { type: Scratch.ArgumentType.STRING, defaultValue: 'Object1' } } },
                     { opcode: 'stepPhysics', blockType: Scratch.BlockType.COMMAND, text: 'step physics simulation' },
-                    { opcode: 'setGravity', blockType: Scratch.BlockType.COMMAND, text: 'set gravity to [GRAV]', arguments: { GRAV: { type: Scratch.ArgumentType.NUMBER, defaultValue: -50 } } },
+                    // UPDATED: Default gravity set to -9.8
+                    { opcode: 'setGravity', blockType: Scratch.BlockType.COMMAND, text: 'set gravity to [GRAV]', arguments: { GRAV: { type: Scratch.ArgumentType.NUMBER, defaultValue: -9.8 } } },
                     { opcode: 'setPhysProp', blockType: Scratch.BlockType.COMMAND, text: 'set [NAME] [PROP] to [VAL]', arguments: { NAME: { type: Scratch.ArgumentType.STRING, defaultValue: 'Object1' }, PROP: { type: Scratch.ArgumentType.STRING, menu: 'physProps', defaultValue: 'bounciness' }, VAL: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0.5 } } },
                     { opcode: 'pushObject', blockType: Scratch.BlockType.COMMAND, text: 'push [NAME] with force x:[X] y:[Y] z:[Z]', arguments: { NAME: { type: Scratch.ArgumentType.STRING, defaultValue: 'Object1' }, X: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 }, Y: { type: Scratch.ArgumentType.NUMBER, defaultValue: 10 }, Z: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 } } },
                     { opcode: 'getTouching', blockType: Scratch.BlockType.REPORTER, text: 'get objects touching [NAME]', arguments: { NAME: { type: Scratch.ArgumentType.STRING, defaultValue: 'Object1' } } },
