@@ -623,6 +623,18 @@
             return JSON.stringify([obj.position.x, obj.position.y, obj.position.z]);
         }
 
+        // NEW BLOCK: Distance
+        getDistanceBetween(args) {
+            if (!this.loaded) return this._check().then(() => this.getDistanceBetween(args));
+            const obj1 = this.objects[args.OBJ1];
+            const obj2 = this.objects[args.OBJ2];
+            
+            // Return 0 if either object doesn't exist to prevent crashes
+            if (!obj1 || !obj2) return 0;
+            
+            return obj1.position.distanceTo(obj2.position);
+        }
+
         getRotation(args) {
             if (!this.loaded) return this._check().then(() => this.getRotation(args));
             const obj = this.objects[args.NAME];
@@ -679,6 +691,8 @@
                 color2: '#357abd',
                 blocks: [
                     { opcode: 'areEnginesLoaded', blockType: Scratch.BlockType.BOOLEAN, text: 'are 3D engines loaded?', disableMonitor: true },
+                    // NEW BLOCK: Hat
+                    { opcode: 'whenEnginesLoaded', blockType: Scratch.BlockType.HAT, text: 'when 3D engines loaded' },
                     '---',
                     { opcode: 'setQualitySetting', blockType: Scratch.BlockType.COMMAND, text: 'set [SETTING] to [VALUE]', arguments: { SETTING: { type: Scratch.ArgumentType.STRING, menu: 'qualityMenu', defaultValue: 'renderDistance' }, VALUE: { type: Scratch.ArgumentType.NUMBER, defaultValue: 100 } } },
                     '---',
@@ -695,6 +709,8 @@
                     { opcode: 'changePosition', blockType: Scratch.BlockType.COMMAND, text: 'move [NAME] by x:[X] y:[Y] z:[Z]', arguments: { NAME: { type: Scratch.ArgumentType.STRING, defaultValue: 'Object1' }, X: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 }, Y: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 }, Z: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 } } },
                     { opcode: 'moveObject', blockType: Scratch.BlockType.COMMAND, text: 'move [NAME] by (local) x:[X] y:[Y] z:[Z]', arguments: { NAME: { type: Scratch.ArgumentType.STRING, defaultValue: 'Object1' }, X: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 }, Y: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 }, Z: { type: Scratch.ArgumentType.NUMBER, defaultValue: 1 } } },
                     { opcode: 'getPosition', blockType: Scratch.BlockType.REPORTER, text: 'get [NAME] position array', arguments: { NAME: { type: Scratch.ArgumentType.STRING, defaultValue: 'Object1' } } },
+                    // NEW BLOCK: Distance
+                    { opcode: 'getDistanceBetween', blockType: Scratch.BlockType.REPORTER, text: 'distance from [OBJ1] to [OBJ2]', arguments: { OBJ1: { type: Scratch.ArgumentType.STRING, defaultValue: 'Object1' }, OBJ2: { type: Scratch.ArgumentType.STRING, defaultValue: 'Object2' } } },
                     '---',
                     { opcode: 'setRot', blockType: Scratch.BlockType.COMMAND, text: 'set [NAME] rotation to x:[X] y:[Y] z:[Z]', arguments: { NAME: { type: Scratch.ArgumentType.STRING, defaultValue: 'Object1' }, X: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 }, Y: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 }, Z: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 } } },
                     { opcode: 'changeRotation', blockType: Scratch.BlockType.COMMAND, text: 'rotate [NAME] by x:[X] y:[Y] z:[Z]', arguments: { NAME: { type: Scratch.ArgumentType.STRING, defaultValue: 'Object1' }, X: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 }, Y: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 }, Z: { type: Scratch.ArgumentType.NUMBER, defaultValue: 0 } } },
@@ -739,6 +755,9 @@
         }
 
         areEnginesLoaded() { return this.loaded; }
+        // NEW HAT BLOCK Logic
+        whenEnginesLoaded() { return this.loaded; }
+
         _getSpriteMenu() {
             if (!Scratch.vm) return [['Sprite1', 'Sprite1']];
             const targets = Scratch.vm.runtime.targets;
