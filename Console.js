@@ -2,7 +2,7 @@
   'use strict';
 
   /**
-   * Console Extension v5
+   * Console Extension v6
    * * Features:
    * - Advanced Logging (Text, Gradients, Images)
    * - Individual Line Styling (Font, Size, Align overrides)
@@ -10,8 +10,9 @@
    * - IntersectionObserver based rendering
    * - Timestamps (Relative/Absolute)
    * - Smart Image Scaling (0 width/height logic)
-   * - Image Roundness (border-radius) - Fixed 0 handling
+   * - Image Roundness (border-radius)
    * - Auto-spacing for images (Hidden in JSON)
+   * - Fixes: Line counting ignores spacing, Image autoscroll, Scrollbar hiding
    */
 
   const BlockType = (Scratch && Scratch.BlockType) ? Scratch.BlockType : {
@@ -97,7 +98,7 @@
       // bind exported methods
       const methods = [
         'getInfo','toggleConsole','showConsole','hideConsole','clearConsole','logMessage','logDots','logImage','removeLine',
-        'styleLine', 'resetLineStyle', // Added resetLineStyle
+        'styleLine', 'resetLineStyle',
         'getConsoleAsArray','setConsoleFromArray','getConsoleLineCount','isConsoleShown','setSelectable',
         'setTimestampFormat','toggleInput','showInput','hideInput','setInputText','runInput','clearInput','setLogInput',
         'whenInput','getLastInput','getCurrentInput','isInputShown',
@@ -129,13 +130,11 @@
           { opcode: 'logImage', blockType: BlockType.COMMAND, text: 'log image [SRC] size [W] x [H] roundness [R]', arguments: { SRC: { type: ArgumentType.STRING, defaultValue: 'https://scv.scratch.mit.edu/da8ed626bf4c64df753823e590740662.svg' }, W: { type: ArgumentType.NUMBER, defaultValue: 0 }, H: { type: ArgumentType.NUMBER, defaultValue: 0 }, R: { type: ArgumentType.NUMBER, defaultValue: 4 } } },
           
           { opcode: 'logDots', blockType: BlockType.COMMAND, text: 'log dots' },
-          // REMOVED: logSpacing block as requested
           
           { opcode: 'removeLine', blockType: BlockType.COMMAND, text: 'remove console line [INDEX]', arguments: { INDEX: { type: ArgumentType.NUMBER, defaultValue: 1 } } },
 
           { opcode: 'styleLine', blockType: BlockType.COMMAND, text: 'style line [INDEX] font [FONT] size [SIZE] align [ALIGN]', arguments: { INDEX: { type: ArgumentType.NUMBER, defaultValue: 1 }, FONT: { type: ArgumentType.STRING, defaultValue: 'Sans Serif' }, SIZE: { type: ArgumentType.NUMBER, defaultValue: 1 }, ALIGN: { type: ArgumentType.STRING, menu: 'alignmentMenu', defaultValue: 'left' } } },
           
-          // NEW BLOCK: Reset Line Style
           { opcode: 'resetLineStyle', blockType: BlockType.COMMAND, text: 'reset style on line [INDEX]', arguments: { INDEX: { type: ArgumentType.NUMBER, defaultValue: 1 } } },
 
           { opcode: 'getConsoleAsArray', blockType: BlockType.REPORTER, text: 'get console JSON' },
@@ -220,7 +219,13 @@
           box-shadow: 0px -2px 10px rgba(0,0,0,0.3);
           border-top-left-radius: 4px;
           border-top-right-radius: 4px;
+          
+          /* Hide Scrollbar */
+          scrollbar-width: none; 
+          -ms-overflow-style: none;
         }
+        .console-suggestions::-webkit-scrollbar { display: none; }
+
         .console-suggestion-item {
           padding: 8px 10px;
           cursor: pointer;
@@ -691,6 +696,14 @@
         // --- ROUNDNESS ---
         img.style.borderRadius = `${Math.max(0, roundness)}px`;
         
+        // --- AUTO SCROLL FIX ON LOAD ---
+        img.onload = () => {
+             // If auto-scroll is enabled, force scroll to bottom when image loads (height changes)
+             if (this._autoScrollEnabled && this.logArea) {
+                  this._instantScrollToBottom();
+             }
+        };
+
         container.appendChild(img);
       } else {
         const msgSpan = document.createElement('span');
@@ -845,12 +858,24 @@
         this._addLineToDOM(entry);
     }
 
+    // -- HELPER: Get actual cache index from visual line index (skipping spacing) --
+    _getRealIndex(visualIndex) {
+        let count = 0;
+        for (let i = 0; i < this._consoleCache.length; i++) {
+            if (this._consoleCache[i].type !== 'spacing') {
+                count++;
+                if (count === visualIndex) return i;
+            }
+        }
+        return -1;
+    }
+
     // -- Style Line Methods --
     styleLine (args) {
         const visibleIndex = Math.floor(Number(args.INDEX) || 1);
-        const idx = visibleIndex - 1;
+        const idx = this._getRealIndex(visibleIndex);
 
-        if (idx < 0 || idx >= this._consoleCache.length || this._consoleCache[idx].type === 'spacing') return;
+        if (idx === -1) return;
 
         const entry = this._consoleCache[idx];
         entry.customFont = String(args.FONT || '');
@@ -866,12 +891,12 @@
         }
     }
 
-    // NEW BLOCK: Reset Line Style
+    // Reset Line Style
     resetLineStyle (args) {
         const visibleIndex = Math.floor(Number(args.INDEX) || 1);
-        const idx = visibleIndex - 1;
+        const idx = this._getRealIndex(visibleIndex);
 
-        if (idx < 0 || idx >= this._consoleCache.length || this._consoleCache[idx].type === 'spacing') return;
+        if (idx === -1) return;
 
         const entry = this._consoleCache[idx];
         // Remove custom properties
@@ -920,8 +945,9 @@
 
     removeLine (args) {
       const visibleIndex = Math.max(1, Math.floor(Number(args.INDEX) || 1));
-      const idx = visibleIndex - 1;
-      if (idx < 0 || idx >= this._consoleCache.length) return;
+      const idx = this._getRealIndex(visibleIndex);
+
+      if (idx === -1) return;
 
       if (this.logArea) {
         const prevScroll = this.logArea.scrollTop || 0;
