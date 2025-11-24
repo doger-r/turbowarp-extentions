@@ -10,7 +10,6 @@
 
     class BubblesExtension {
         constructor() {
-            // Renamed keys to replace dashes with spaces and remove "Edge"
             this.slices = {
                 'Top Left': null,
                 'Top': null,
@@ -217,7 +216,6 @@
         }
 
         async _generateBubbleCanvas(text, fontName, fontSize, cornerSize, padding, color, bgColor, target) {
-            // 1. Load all images
             const sliceKeys = Object.keys(this.slices);
             const loadedImages = {};
             
@@ -228,7 +226,6 @@
             const hasImages = Object.values(loadedImages).some(img => img !== null);
             const fontString = `bold ${fontSize}px "${fontName}", sans-serif`;
 
-            // 2. Measure Text
             const tempCanvas = document.createElement('canvas');
             const tempCtx = tempCanvas.getContext('2d');
             tempCtx.font = fontString;
@@ -237,7 +234,6 @@
             const textWidth = Math.ceil(metrics.width);
             const textHeight = Math.ceil(fontSize); 
 
-            // --- FALLBACK (No Slices) ---
             if (!hasImages) {
                 const canvas = document.createElement('canvas');
                 const ctx = canvas.getContext('2d');
@@ -261,8 +257,6 @@
                 
                 return canvas;
             }
-
-            // --- 9-SLICE LOGIC ---
 
             const getImageSize = (img, isWidth) => {
                 if (!img) return 0;
@@ -300,37 +294,24 @@
             ctx.clearRect(0, 0, finalW, finalH);
             ctx.imageSmoothingEnabled = false;
 
-            // --- TINTING HELPER (UPDATED for "Exact" Colors) ---
             const drawTinted = (img, x, y, w, h) => {
                 if (!img) return;
-
-                // White (#ffffff) = No tint
                 if (!bgColor || bgColor.toLowerCase() === '#ffffff') {
                     ctx.drawImage(img, 0, 0, img.width, img.height, x, y, w, h);
                     return;
                 }
-
                 const tCan = document.createElement('canvas');
                 tCan.width = w;
                 tCan.height = h;
                 const tCtx = tCan.getContext('2d');
                 tCtx.imageSmoothingEnabled = false;
-
-                // 1. Draw the image (Mask)
                 tCtx.drawImage(img, 0, 0, img.width, img.height, 0, 0, w, h);
-
-                // 2. Source-In Composite
-                // This replaces the RGB channels of the image with the fill color,
-                // while preserving the original Alpha channel.
-                // This ensures the color is EXACTLY what the user picked, not a darkened multiply blend.
                 tCtx.globalCompositeOperation = 'source-in';
                 tCtx.fillStyle = bgColor;
                 tCtx.fillRect(0, 0, w, h);
-
                 ctx.drawImage(tCan, x, y);
             };
 
-            // -- Drawing Slices --
             if (iC) drawTinted(iC, leftW, topH, contentW, contentH);
             else if (bgColor) {
                 ctx.fillStyle = bgColor;
@@ -347,7 +328,6 @@
             if (iBL) drawTinted(iBL, 0, finalH - bottomH, leftW, bottomH);
             if (iBR) drawTinted(iBR, finalW - rightW, finalH - bottomH, rightW, bottomH);
 
-            // -- Text --
             ctx.fillStyle = color;
             ctx.font = fontString;
             ctx.textAlign = 'center';
@@ -361,32 +341,42 @@
             return canvas;
         }
 
-        // Apply a patch to the target to detect costume changes
         _patchTargetCostumeSwitch(target) {
+            // Safety check: If already patched, do not patch again to avoid recursion
             if (target._bubblePatchInstalled) return;
-            
             target._bubblePatchInstalled = true;
+
             const originalSetCostume = target.setCostume;
 
             // Override setCostume
             target.setCostume = function(index, ...args) {
-                // Before switching, check if the current costume was a bubble
-                const currentCostumeIndex = this.currentCostume;
-                const currentCostume = this.sprite.costumes[currentCostumeIndex];
+                // WRAPPED IN TRY/CATCH: 
+                // This ensures that even if the bubble cleanup fails, 
+                // the actual costume switch (originalSetCostume) STILL runs.
+                try {
+                    const currentCostumeIndex = this.currentCostume;
+                    
+                    // Ensure sprite and costumes exist before accessing
+                    if (this.sprite && this.sprite.costumes && this.sprite.costumes[currentCostumeIndex]) {
+                        const currentCostume = this.sprite.costumes[currentCostumeIndex];
 
-                if (currentCostume && currentCostume._originalSkinId) {
-                    // It was a bubble! Revert it.
-                    // 1. Destroy the temporary bubble skin to free memory
-                    if (currentCostume._bubbleSkinId) {
-                        this.renderer.destroySkin(currentCostume._bubbleSkinId);
+                        if (currentCostume && currentCostume._originalSkinId) {
+                            // It was a bubble! Revert it.
+                            if (currentCostume._bubbleSkinId) {
+                                // Use the globally captured 'renderer' or vm.renderer to be safe
+                                vm.renderer.destroySkin(currentCostume._bubbleSkinId);
+                            }
+                            
+                            // Restore the original skin ID
+                            currentCostume.skinId = currentCostume._originalSkinId;
+                            
+                            // Cleanup properties
+                            delete currentCostume._originalSkinId;
+                            delete currentCostume._bubbleSkinId;
+                        }
                     }
-                    
-                    // 2. Restore the original skin ID
-                    currentCostume.skinId = currentCostume._originalSkinId;
-                    
-                    // 3. Cleanup our custom properties
-                    delete currentCostume._originalSkinId;
-                    delete currentCostume._bubbleSkinId;
+                } catch (e) {
+                    console.warn('Bubbles Extension: Failed to cleanup bubble skin, but proceeding with costume switch.', e);
                 }
 
                 // Proceed with the actual switch
@@ -411,30 +401,20 @@
             
             if (!costume) return;
 
-            // Ensure we are listening for costume switches on this target
             this._patchTargetCostumeSwitch(target);
 
-            // Revert previous bubble skin if we are re-generating on the same costume
             if (costume._bubbleSkinId && costume._originalSkinId) {
                 renderer.destroySkin(costume._bubbleSkinId);
-                // Note: We keep _originalSkinId as is
             } else if (!costume._originalSkinId) {
-                // First time bubbling this costume: Save the original skin ID
                 costume._originalSkinId = costume.skinId;
             }
 
-            // Create a NEW skin for the bubble
-            // We use createBitmapSkin instead of updateBitmapSkin to keep them separate
             const bubbleSkinId = renderer.createBitmapSkin(canvas, 1);
             
-            // Assign the new bubble skin to the costume
             costume._bubbleSkinId = bubbleSkinId;
             costume.skinId = bubbleSkinId;
             
-            // FORCE UPDATE: Tell the renderer explicitly to use the new skin ID for this target
             target.updateAllDrawableProperties();
-            
-            // Trigger a visual update for bounds/collision
             target.emit('TARGET_WAS_DRAGGED');
         }
 
