@@ -2,13 +2,14 @@
   'use strict';
 
   /**
-   * Console Extension v3
+   * Console Extension v3 (Modified)
    * * Features:
    * - Advanced Logging (Text, Gradients, Images)
    * - Individual Line Styling (Font, Size, Align overrides)
    * - Interactive Input with Minecraft-style Autofill
    * - IntersectionObserver based rendering
    * - Timestamps (Relative/Absolute)
+   * - Smart Image Scaling (0 width/height logic)
    */
 
   const BlockType = (Scratch && Scratch.BlockType) ? Scratch.BlockType : {
@@ -123,7 +124,8 @@
           { opcode: 'clearConsole', blockType: BlockType.COMMAND, text: 'clear console' },
           { opcode: 'logMessage', blockType: BlockType.COMMAND, text: 'log [TEXT] in color [COLOR]', arguments: { TEXT: { type: ArgumentType.STRING, defaultValue: 'Hello!' }, COLOR: { type: ArgumentType.COLOR, defaultValue: '#FFFFFF' } } },
           
-          { opcode: 'logImage', blockType: BlockType.COMMAND, text: 'log image [SRC] size [W] x [H]', arguments: { SRC: { type: ArgumentType.STRING, defaultValue: 'https://scv.scratch.mit.edu/da8ed626bf4c64df753823e590740662.svg' }, W: { type: ArgumentType.NUMBER, defaultValue: 50 }, H: { type: ArgumentType.NUMBER, defaultValue: 50 } } },
+          // MODIFIED: Defaults for W and H set to 0
+          { opcode: 'logImage', blockType: BlockType.COMMAND, text: 'log image [SRC] size [W] x [H]', arguments: { SRC: { type: ArgumentType.STRING, defaultValue: 'https://scv.scratch.mit.edu/da8ed626bf4c64df753823e590740662.svg' }, W: { type: ArgumentType.NUMBER, defaultValue: 0 }, H: { type: ArgumentType.NUMBER, defaultValue: 0 } } },
           
           { opcode: 'logDots', blockType: BlockType.COMMAND, text: 'log dots' },
           { opcode: 'removeLine', blockType: BlockType.COMMAND, text: 'remove console line [INDEX]', arguments: { INDEX: { type: ArgumentType.NUMBER, defaultValue: 1 } } },
@@ -639,10 +641,30 @@
         const img = document.createElement('img');
         img.className = 'console-img';
         img.src = entry.src;
-        const w = entry.width;
-        const h = entry.height;
-        img.style.width = typeof w === 'number' ? `${w}px` : w;
-        img.style.height = typeof h === 'number' ? `${h}px` : h;
+        
+        // --- MODIFIED SCALING LOGIC ---
+        const valW = Number(entry.width) || 0;
+        const valH = Number(entry.height) || 0;
+
+        if (valW === 0 && valH === 0) {
+            // Both 0 -> Native resolution (auto)
+            img.style.width = 'auto';
+            img.style.height = 'auto';
+        } else if (valW === 0) {
+            // Width 0, Height set -> Scale width proportionally
+            img.style.width = 'auto';
+            img.style.height = `${valH}px`;
+        } else if (valH === 0) {
+            // Height 0, Width set -> Scale height proportionally
+            img.style.width = `${valW}px`;
+            img.style.height = 'auto';
+        } else {
+            // Both set -> Stretch/Fix to dimensions
+            img.style.width = `${valW}px`;
+            img.style.height = `${valH}px`;
+        }
+        // -----------------------------
+        
         container.appendChild(img);
       } else {
         const msgSpan = document.createElement('span');
