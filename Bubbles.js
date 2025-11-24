@@ -10,21 +10,19 @@
 
     class BubblesExtension {
         constructor() {
-            // Store the source for the 9 slices
-            // Each can be { type: 'costume', value: 'name' } or { type: 'url', value: 'data:...' }
+            // Renamed keys to replace dashes with spaces and remove "Edge"
             this.slices = {
-                'Top-Left': null,
-                'Top-Edge': null,
-                'Top-Right': null,
-                'Left-Edge': null,
+                'Top Left': null,
+                'Top': null,
+                'Top Right': null,
+                'Left': null,
                 'Center': null,
-                'Right-Edge': null,
-                'Bottom-Left': null,
-                'Bottom-Edge': null,
-                'Bottom-Right': null
+                'Right': null,
+                'Bottom Left': null,
+                'Bottom': null,
+                'Bottom Right': null
             };
 
-            // Cache for loaded images to reduce flickering/lag
             this.imageCache = new Map();
         }
 
@@ -32,7 +30,7 @@
             return {
                 id: 'customCaptchaBubble',
                 name: 'Bubbles',
-                color1: '#9966FF', // Looks category purple
+                color1: '#9966FF',
                 color2: '#774DCB',
                 blocks: [
                     {
@@ -77,15 +75,23 @@
                     {
                         opcode: 'createBubble',
                         blockType: Scratch.BlockType.COMMAND,
-                        text: 'show bubble: text [TEXT] size [SIZE] padding [PADDING] color [COLOR]',
+                        text: 'show bubble: text [TEXT] font [FONT] size [SIZE] corner size [C_SIZE] padding [PADDING] color [COLOR] bg [BG_COLOR]',
                         arguments: {
                             TEXT: {
                                 type: Scratch.ArgumentType.STRING,
                                 defaultValue: 'Hello World'
                             },
+                            FONT: {
+                                type: Scratch.ArgumentType.STRING,
+                                defaultValue: 'Sans Serif'
+                            },
                             SIZE: {
                                 type: Scratch.ArgumentType.NUMBER,
                                 defaultValue: 24
+                            },
+                            C_SIZE: {
+                                type: Scratch.ArgumentType.NUMBER,
+                                defaultValue: 0 // 0 means auto-detect from image size
                             },
                             PADDING: {
                                 type: Scratch.ArgumentType.NUMBER,
@@ -94,21 +100,33 @@
                             COLOR: {
                                 type: Scratch.ArgumentType.COLOR,
                                 defaultValue: '#000000'
+                            },
+                            BG_COLOR: {
+                                type: Scratch.ArgumentType.COLOR,
+                                defaultValue: '#ffffff'
                             }
                         }
                     },
                     {
                         opcode: 'getBubbleDataUri',
                         blockType: Scratch.BlockType.REPORTER,
-                        text: 'get bubble data uri: text [TEXT] size [SIZE] padding [PADDING] color [COLOR]',
+                        text: 'get bubble data uri: text [TEXT] font [FONT] size [SIZE] corner size [C_SIZE] padding [PADDING] color [COLOR] bg [BG_COLOR]',
                         arguments: {
                             TEXT: {
                                 type: Scratch.ArgumentType.STRING,
                                 defaultValue: 'Hello World'
                             },
+                            FONT: {
+                                type: Scratch.ArgumentType.STRING,
+                                defaultValue: 'Sans Serif'
+                            },
                             SIZE: {
                                 type: Scratch.ArgumentType.NUMBER,
                                 defaultValue: 24
+                            },
+                            C_SIZE: {
+                                type: Scratch.ArgumentType.NUMBER,
+                                defaultValue: 0
                             },
                             PADDING: {
                                 type: Scratch.ArgumentType.NUMBER,
@@ -117,6 +135,10 @@
                             COLOR: {
                                 type: Scratch.ArgumentType.COLOR,
                                 defaultValue: '#000000'
+                            },
+                            BG_COLOR: {
+                                type: Scratch.ArgumentType.COLOR,
+                                defaultValue: '#ffffff'
                             }
                         }
                     }
@@ -125,9 +147,9 @@
                     SLICE_PARTS: {
                         acceptReporters: true,
                         items: [
-                            'Top-Left', 'Top-Edge', 'Top-Right',
-                            'Left-Edge', 'Center', 'Right-Edge',
-                            'Bottom-Left', 'Bottom-Edge', 'Bottom-Right'
+                            'Top Left', 'Top', 'Top Right',
+                            'Left', 'Center', 'Right',
+                            'Bottom Left', 'Bottom', 'Bottom Right'
                         ]
                     },
                     COSTUMES: {
@@ -153,7 +175,7 @@
 
         setSlice(args) {
             this.slices[args.PART] = { type: 'costume', value: args.COSTUME };
-            this.imageCache.delete(args.PART); // Invalidate cache for this part
+            this.imageCache.delete(args.PART);
         }
 
         setSliceFromUrl(args) {
@@ -165,13 +187,7 @@
             const sliceData = this.slices[key];
             if (!sliceData) return null;
 
-            // Check cache first
-            // We use a composite key for cache if it's a costume to handle sprite switching, 
-            // but for simplicity in this game engine context, simple keying is usually enough 
-            // if we clear cache on setSlice.
             if (this.imageCache.has(key)) {
-                // If it's a costume, we need to make sure the costume version hasn't changed?
-                // For performance in a game loop, we'll assume cache is valid until setSlice is called.
                 return this.imageCache.get(key);
             }
 
@@ -200,7 +216,7 @@
             });
         }
 
-        async _generateBubbleCanvas(text, fontSize, padding, color, target) {
+        async _generateBubbleCanvas(text, fontName, fontSize, cornerSize, padding, color, bgColor, target) {
             // 1. Load all images
             const sliceKeys = Object.keys(this.slices);
             const loadedImages = {};
@@ -209,133 +225,146 @@
                 loadedImages[key] = await this._loadSliceImage(target, key);
             }));
 
-            // Fallback safety
-            if (!Object.values(loadedImages).some(img => img !== null)) {
-                // Return a simple canvas with text if no images found
+            // Check if any images are actually loaded
+            const hasImages = Object.values(loadedImages).some(img => img !== null);
+
+            // Font String Construction
+            // We trust the user's input. If it's invalid, Canvas falls back to default.
+            // We append a fallback stack just in case.
+            const fontString = `bold ${fontSize}px "${fontName}", sans-serif`;
+
+            // 2. Measure Text
+            const tempCanvas = document.createElement('canvas');
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.font = fontString;
+            const metrics = tempCtx.measureText(text);
+            
+            const textWidth = Math.ceil(metrics.width);
+            const textHeight = Math.ceil(fontSize); 
+
+            // --- FALLBACK (No Slices) ---
+            if (!hasImages) {
                 const canvas = document.createElement('canvas');
                 const ctx = canvas.getContext('2d');
-                ctx.font = `${fontSize}px sans-serif`;
-                const m = ctx.measureText(text);
-                canvas.width = m.width + 10;
-                canvas.height = fontSize + 10;
-                ctx.fillText(text, 5, fontSize);
+                
+                const boxW = textWidth + (padding * 2);
+                const boxH = textHeight + (padding * 2);
+
+                canvas.width = boxW;
+                canvas.height = boxH;
+
+                // Fill Background
+                if (bgColor) {
+                    ctx.fillStyle = bgColor;
+                    ctx.fillRect(0, 0, boxW, boxH);
+                }
+
+                // Draw Text
+                ctx.font = fontString;
+                ctx.fillStyle = color;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(text, boxW / 2, boxH / 2);
+                
                 return canvas;
             }
 
-            // 2. Measure Text
-            const canvas = document.createElement('canvas');
-            const ctx = canvas.getContext('2d');
-            ctx.font = `bold ${fontSize}px sans-serif`;
-            const metrics = ctx.measureText(text);
-            
-            // Calculate actual height closer to visual height
-            const textWidth = Math.ceil(metrics.width);
-            const textHeight = Math.ceil(fontSize); // Simple approximation
+            // --- 9-SLICE LOGIC ---
 
-            // 3. Geometry Calculation
-            const tl = loadedImages['Top-Left'] || { width: 0, height: 0 };
-            const tr = loadedImages['Top-Right'] || { width: 0, height: 0 };
-            const bl = loadedImages['Bottom-Left'] || { width: 0, height: 0 };
-            const br = loadedImages['Bottom-Right'] || { width: 0, height: 0 };
-            
-            const tEdge = loadedImages['Top-Edge'] || { height: 0 };
-            const bEdge = loadedImages['Bottom-Edge'] || { height: 0 };
-            const lEdge = loadedImages['Left-Edge'] || { width: 0 };
-            const rEdge = loadedImages['Right-Edge'] || { width: 0 };
+            const getImageSize = (img, isWidth) => {
+                if (!img) return 0;
+                if (cornerSize > 0) return cornerSize;
+                return isWidth ? img.width : img.height;
+            };
 
-            // Content Box Size
+            const iTL = loadedImages['Top Left'];
+            const iT  = loadedImages['Top'];
+            const iTR = loadedImages['Top Right'];
+            const iL  = loadedImages['Left'];
+            const iC  = loadedImages['Center'];
+            const iR  = loadedImages['Right'];
+            const iBL = loadedImages['Bottom Left'];
+            const iB  = loadedImages['Bottom'];
+            const iBR = loadedImages['Bottom Right'];
+
+            const leftW   = Math.max(getImageSize(iTL, true), getImageSize(iBL, true), getImageSize(iL, true));
+            const rightW  = Math.max(getImageSize(iTR, true), getImageSize(iBR, true), getImageSize(iR, true));
+            const topH    = Math.max(getImageSize(iTL, false), getImageSize(iTR, false), getImageSize(iT, false));
+            const bottomH = Math.max(getImageSize(iBL, false), getImageSize(iBR, false), getImageSize(iB, false));
+
             const contentW = textWidth + (padding * 2);
             const contentH = textHeight + (padding * 2);
 
-            // Border Thickness Logic
-            // The thickness of the frame is determined by the max size of the corners/edges on that side
-            const leftW = Math.max(tl.width, bl.width, lEdge.width);
-            const rightW = Math.max(tr.width, br.width, rEdge.width);
-            const topH = Math.max(tl.height, tr.height, tEdge.height);
-            const bottomH = Math.max(bl.height, br.height, bEdge.height);
-
             const finalW = Math.ceil(leftW + contentW + rightW);
             const finalH = Math.ceil(topH + contentH + bottomH);
+
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
 
             canvas.width = finalW;
             canvas.height = finalH;
             
             ctx.clearRect(0, 0, finalW, finalH);
-            ctx.imageSmoothingEnabled = false; // Pixel art friendly
+            ctx.imageSmoothingEnabled = false;
 
-            // 4. Drawing Logic
-            // We use Math.round to prevent sub-pixel bleeding (the "weird shadow" issue)
+            // --- TINTING HELPER ---
+            const drawTinted = (img, x, y, w, h) => {
+                if (!img) return;
 
-            // -- Center --
-            if (loadedImages['Center']) {
-                ctx.drawImage(
-                    loadedImages['Center'], 
-                    leftW, topH, 
-                    contentW, contentH
-                );
-            }
+                // White (#ffffff) = No tint
+                if (!bgColor || bgColor.toLowerCase() === '#ffffff') {
+                    ctx.drawImage(img, 0, 0, img.width, img.height, x, y, w, h);
+                    return;
+                }
 
-            // -- Edges --
-            // Top Edge: stretches horizontally between leftW and (finalW - rightW)
-            if (loadedImages['Top-Edge']) {
-                ctx.drawImage(
-                    loadedImages['Top-Edge'],
-                    leftW, 0,
-                    contentW, topH
-                );
-            }
-            // Bottom Edge
-            if (loadedImages['Bottom-Edge']) {
-                ctx.drawImage(
-                    loadedImages['Bottom-Edge'],
-                    leftW, finalH - bottomH,
-                    contentW, bottomH
-                );
-            }
-            // Left Edge: stretches vertically
-            if (loadedImages['Left-Edge']) {
-                ctx.drawImage(
-                    loadedImages['Left-Edge'],
-                    0, topH,
-                    leftW, contentH
-                );
-            }
-            // Right Edge
-            if (loadedImages['Right-Edge']) {
-                ctx.drawImage(
-                    loadedImages['Right-Edge'],
-                    finalW - rightW, topH,
-                    rightW, contentH
-                );
+                const tCan = document.createElement('canvas');
+                tCan.width = w;
+                tCan.height = h;
+                const tCtx = tCan.getContext('2d');
+                tCtx.imageSmoothingEnabled = false;
+
+                // 1. Grayscale
+                tCtx.filter = 'grayscale(100%)';
+                tCtx.drawImage(img, 0, 0, img.width, img.height, 0, 0, w, h);
+                tCtx.filter = 'none';
+
+                // 2. Multiply Tint
+                tCtx.globalCompositeOperation = 'multiply';
+                tCtx.fillStyle = bgColor;
+                tCtx.fillRect(0, 0, w, h);
+
+                // 3. Mask Alpha
+                tCtx.globalCompositeOperation = 'destination-in';
+                tCtx.drawImage(img, 0, 0, img.width, img.height, 0, 0, w, h);
+
+                ctx.drawImage(tCan, x, y);
+            };
+
+            // -- Drawing Slices --
+            if (iC) drawTinted(iC, leftW, topH, contentW, contentH);
+            else if (bgColor) {
+                // If no center slice, plain fill
+                ctx.fillStyle = bgColor;
+                ctx.fillRect(leftW, topH, contentW, contentH);
             }
 
-            // -- Corners --
-            // Top Left (Anchored 0,0)
-            if (loadedImages['Top-Left']) {
-                ctx.drawImage(loadedImages['Top-Left'], 0, 0);
-            }
-            // Top Right (Anchored Right, 0)
-            if (loadedImages['Top-Right']) {
-                ctx.drawImage(loadedImages['Top-Right'], finalW - tr.width, 0);
-            }
-            // Bottom Left (Anchored 0, Bottom)
-            if (loadedImages['Bottom-Left']) {
-                ctx.drawImage(loadedImages['Bottom-Left'], 0, finalH - bl.height);
-            }
-            // Bottom Right (Anchored Right, Bottom)
-            if (loadedImages['Bottom-Right']) {
-                ctx.drawImage(loadedImages['Bottom-Right'], finalW - br.width, finalH - br.height);
-            }
+            if (iT) drawTinted(iT, leftW, 0, contentW, topH);
+            if (iB) drawTinted(iB, leftW, finalH - bottomH, contentW, bottomH);
+            if (iL) drawTinted(iL, 0, topH, leftW, contentH);
+            if (iR) drawTinted(iR, finalW - rightW, topH, rightW, contentH);
 
-            // 5. Draw Text
+            if (iTL) drawTinted(iTL, 0, 0, leftW, topH);
+            if (iTR) drawTinted(iTR, finalW - rightW, 0, rightW, topH);
+            if (iBL) drawTinted(iBL, 0, finalH - bottomH, leftW, bottomH);
+            if (iBR) drawTinted(iBR, finalW - rightW, finalH - bottomH, rightW, bottomH);
+
+            // -- Text --
             ctx.fillStyle = color;
-            ctx.font = `bold ${fontSize}px sans-serif`;
+            ctx.font = fontString;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
             
-            // Calculate center of the content area
             const centerX = leftW + (contentW / 2);
-            // Adjust centerY slightly for textBaseline middle optical alignment
             const centerY = topH + (contentH / 2) + 1; 
 
             ctx.fillText(text, centerX, centerY);
@@ -345,39 +374,46 @@
 
         async createBubble(args, util) {
             const text = String(args.TEXT);
+            const font = String(args.FONT);
             const size = Number(args.SIZE) || 24;
+            const cornerSize = Number(args.C_SIZE) || 0;
             const padding = Number(args.PADDING) || 10;
             const color = args.COLOR;
+            const bgColor = args.BG_COLOR;
 
-            const canvas = await this._generateBubbleCanvas(text, size, padding, color, util.target);
+            const canvas = await this._generateBubbleCanvas(text, font, size, cornerSize, padding, color, bgColor, util.target);
             
-            // --- Skin Update Logic (Like Skins Extension) ---
-            const context = canvas.getContext('2d');
-            const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+            // --- UPDATED METHOD (Similar to Peng3D) ---
+            // Instead of creating a NEW skin ID, we update the EXISTING skin ID of the current costume.
+            // This is often more reliable for live updates.
             
-            // Create a new skin ID
-            // Rotation center is the middle of the bubble
-            const rotationCenter = [canvas.width / 2, canvas.height / 2];
+            const target = util.target;
+            const costumeIndex = target.currentCostume;
+            const costume = target.sprite.costumes[costumeIndex];
             
-            const skinId = renderer.createBitmapSkin(imageData, rotationCenter);
+            if (!costume) return;
+
+            // We update the bitmap data of the current skin.
+            // Scale 1 is usually sufficient, or we could use window.devicePixelRatio if we wanted HD.
+            const scale = 1; 
             
-            // Apply skin to the drawable
-            const drawableId = util.target.drawableID;
-            renderer.updateDrawableSkinId(drawableId, skinId);
+            // This function (updateBitmapSkin) exists on the renderer and updates the texture in-place.
+            renderer.updateBitmapSkin(costume.skinId, canvas, scale);
             
-            // Update the target's size properties so Scratch knows the new bounds
-            // This is strictly internal but helps with collision detection if needed
-            // However, full collision update requires deeper VM integration.
-            // Visually, this is enough.
+            // Trigger a visual update
+            target.emit('TARGET_WAS_DRAGGED');
         }
 
         async getBubbleDataUri(args, util) {
             const text = String(args.TEXT);
+            const font = String(args.FONT);
             const size = Number(args.SIZE) || 24;
+            const cornerSize = Number(args.C_SIZE) || 0;
             const padding = Number(args.PADDING) || 10;
             const color = args.COLOR;
+            const bgColor = args.BG_COLOR;
 
-            const canvas = await this._generateBubbleCanvas(text, size, padding, color, util.target);
+            const canvas = await this._generateBubbleCanvas(text, font, size, cornerSize, padding, color, bgColor, util.target);
             return canvas.toDataURL();
         }
     }
