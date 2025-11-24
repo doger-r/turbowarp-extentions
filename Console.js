@@ -2,7 +2,7 @@
   'use strict';
 
   /**
-   * Console Extension v4 (Modified)
+   * Console Extension v5
    * * Features:
    * - Advanced Logging (Text, Gradients, Images)
    * - Individual Line Styling (Font, Size, Align overrides)
@@ -10,8 +10,8 @@
    * - IntersectionObserver based rendering
    * - Timestamps (Relative/Absolute)
    * - Smart Image Scaling (0 width/height logic)
-   * - Image Roundness (border-radius)
-   * - Vertical Spacing Block (non-line)
+   * - Image Roundness (border-radius) - Fixed 0 handling
+   * - Auto-spacing for images (Hidden in JSON)
    */
 
   const BlockType = (Scratch && Scratch.BlockType) ? Scratch.BlockType : {
@@ -37,7 +37,7 @@
       this.stage = null;
 
       // data
-      // entries: { id, type, text?, src?, width?, height?, roundness?, spacingHeight?, colorRaw, ts, customFont?, customSize?, customAlign? }
+      // entries: { id, type, text?, src?, width?, height?, roundness?, spacingHeight?, isAutoSpacing?, colorRaw, ts, customFont?, customSize?, customAlign? }
       this._consoleCache = []; 
       this._nextId = 1;
       this._inputCache = '';
@@ -96,8 +96,8 @@
 
       // bind exported methods
       const methods = [
-        'getInfo','toggleConsole','showConsole','hideConsole','clearConsole','logMessage','logDots','logImage','logSpacing','removeLine',
-        'styleLine', // New method
+        'getInfo','toggleConsole','showConsole','hideConsole','clearConsole','logMessage','logDots','logImage','removeLine',
+        'styleLine', 'resetLineStyle', // Added resetLineStyle
         'getConsoleAsArray','setConsoleFromArray','getConsoleLineCount','isConsoleShown','setSelectable',
         'setTimestampFormat','toggleInput','showInput','hideInput','setInputText','runInput','clearInput','setLogInput',
         'whenInput','getLastInput','getCurrentInput','isInputShown',
@@ -126,16 +126,17 @@
           { opcode: 'clearConsole', blockType: BlockType.COMMAND, text: 'clear console' },
           { opcode: 'logMessage', blockType: BlockType.COMMAND, text: 'log [TEXT] in color [COLOR]', arguments: { TEXT: { type: ArgumentType.STRING, defaultValue: 'Hello!' }, COLOR: { type: ArgumentType.COLOR, defaultValue: '#FFFFFF' } } },
           
-          // MODIFIED: Added ROUNDNESS parameter
           { opcode: 'logImage', blockType: BlockType.COMMAND, text: 'log image [SRC] size [W] x [H] roundness [R]', arguments: { SRC: { type: ArgumentType.STRING, defaultValue: 'https://scv.scratch.mit.edu/da8ed626bf4c64df753823e590740662.svg' }, W: { type: ArgumentType.NUMBER, defaultValue: 0 }, H: { type: ArgumentType.NUMBER, defaultValue: 0 }, R: { type: ArgumentType.NUMBER, defaultValue: 4 } } },
           
           { opcode: 'logDots', blockType: BlockType.COMMAND, text: 'log dots' },
-          // NEW BLOCK: Vertical Spacing
-          { opcode: 'logSpacing', blockType: BlockType.COMMAND, text: 'add [HEIGHT] px vertical spacing', arguments: { HEIGHT: { type: ArgumentType.NUMBER, defaultValue: 10 } } },
+          // REMOVED: logSpacing block as requested
           
           { opcode: 'removeLine', blockType: BlockType.COMMAND, text: 'remove console line [INDEX]', arguments: { INDEX: { type: ArgumentType.NUMBER, defaultValue: 1 } } },
 
           { opcode: 'styleLine', blockType: BlockType.COMMAND, text: 'style line [INDEX] font [FONT] size [SIZE] align [ALIGN]', arguments: { INDEX: { type: ArgumentType.NUMBER, defaultValue: 1 }, FONT: { type: ArgumentType.STRING, defaultValue: 'Sans Serif' }, SIZE: { type: ArgumentType.NUMBER, defaultValue: 1 }, ALIGN: { type: ArgumentType.STRING, menu: 'alignmentMenu', defaultValue: 'left' } } },
+          
+          // NEW BLOCK: Reset Line Style
+          { opcode: 'resetLineStyle', blockType: BlockType.COMMAND, text: 'reset style on line [INDEX]', arguments: { INDEX: { type: ArgumentType.NUMBER, defaultValue: 1 } } },
 
           { opcode: 'getConsoleAsArray', blockType: BlockType.REPORTER, text: 'get console JSON' },
           { opcode: 'setConsoleFromArray', blockType: BlockType.COMMAND, text: 'load console from JSON [ARRAY]', arguments: { ARRAY: { type: ArgumentType.STRING, defaultValue: '[]' } } },
@@ -309,7 +310,7 @@
       if (Date.now() - (this._lastUserScroll || 0) > this._userScrollGrace) this._applyCachedScroll();
     }
 
-    // ---- DYNAMIC SIZING LOGIC UPDATED FOR PER-LINE STYLING ----
+    // ---- DYNAMIC SIZING LOGIC ----
     _resizeDynamicSizes () {
       const stageH = (typeof vm !== 'undefined' && vm && vm.runtime && vm.runtime.renderer && vm.runtime.renderer.canvas)
         ? vm.runtime.renderer.canvas.clientHeight
@@ -664,7 +665,10 @@
         // --- SCALING LOGIC ---
         const valW = Number(entry.width) || 0;
         const valH = Number(entry.height) || 0;
-        const roundness = Math.max(0, Number(entry.roundness) || 4); // Use default of 4px
+        
+        // FIX: Handle 0 properly (explicit 0 means 0, default to 4 if invalid)
+        const rawR = entry.roundness;
+        const roundness = (rawR === '' || rawR === null || rawR === undefined || isNaN(rawR)) ? 4 : Number(rawR);
 
         if (valW === 0 && valH === 0) {
             // Both 0 -> Native resolution (auto)
@@ -685,7 +689,7 @@
         }
         
         // --- ROUNDNESS ---
-        img.style.borderRadius = `${roundness}px`;
+        img.style.borderRadius = `${Math.max(0, roundness)}px`;
         
         container.appendChild(img);
       } else {
@@ -804,53 +808,82 @@
     }
     logMessage (args) { this._log(args.TEXT, args.COLOR); }
     
-    // MODIFIED: Added ROUNDNESS parameter
+    // MODIFIED: logImage with Auto Spacing
     logImage (args) {
         const entry = { id: this._nextId++, type: 'image', src: String(args.SRC), width: args.W, height: args.H, roundness: args.R, ts: Date.now() };
         this._consoleCache.push(entry);
         if (this._dotsInterval) this._stopDots();
         this._addLineToDOM(entry);
+
+        // Auto add slight spacing after image (10px)
+        // isAuto=true, so it won't show in JSON export
+        this._addSpacing(10, true);
     }
 
-    // NEW BLOCK: logSpacing
-    logSpacing(args) {
-        const height = Math.max(0, Number(args.HEIGHT) || 0);
-        if (height === 0) return;
-
-        // Check the last entry to prevent double spacing
+    // Helper: Add or Update Spacing
+    _addSpacing(height, isAuto = false) {
+        const h = Math.max(0, Number(height) || 0);
+        
+        // If the last entry is already spacing, update it instead of adding new one
         const lastEntry = this._consoleCache[this._consoleCache.length - 1];
         if (lastEntry && lastEntry.type === 'spacing') {
-            // Already a spacing block, skip adding another one
+            lastEntry.spacingHeight = h;
+            lastEntry.isAutoSpacing = isAuto; // Update source flag
+            // Update DOM if visible
+            if (this.logArea) {
+                const el = this.logArea.querySelector(`[data-id="${lastEntry.id}"]`);
+                if (el) el.style.marginTop = `${h}px`;
+            }
             return;
         }
 
-        const entry = { id: this._nextId++, type: 'spacing', spacingHeight: height };
+        // Otherwise create new spacing entry
+        if (h === 0) return; // Don't add 0px new spacing
+        const entry = { id: this._nextId++, type: 'spacing', spacingHeight: h, isAutoSpacing: isAuto };
         this._consoleCache.push(entry);
         if (this._dotsInterval) this._stopDots();
         this._addLineToDOM(entry);
     }
 
-    // -- New Style Line Method --
+    // -- Style Line Methods --
     styleLine (args) {
         const visibleIndex = Math.floor(Number(args.INDEX) || 1);
         const idx = visibleIndex - 1;
 
-        // Validation: Index must be valid and line type must not be 'spacing'
         if (idx < 0 || idx >= this._consoleCache.length || this._consoleCache[idx].type === 'spacing') return;
 
         const entry = this._consoleCache[idx];
-        
-        // Update Cache
         entry.customFont = String(args.FONT || '');
         entry.customSize = Number(args.SIZE) || 1;
         entry.customAlign = String(args.ALIGN || '').toLowerCase();
         
-        // Update DOM if exists
         if (this.logArea) {
             const el = this.logArea.querySelector(`[data-id="${entry.id}"]`);
             if (el) {
                 this._applyLineStyle(el, entry);
-                // Trigger resize to calculate new pixel sizes based on the new multiplier
+                this._resizeDynamicSizes();
+            }
+        }
+    }
+
+    // NEW BLOCK: Reset Line Style
+    resetLineStyle (args) {
+        const visibleIndex = Math.floor(Number(args.INDEX) || 1);
+        const idx = visibleIndex - 1;
+
+        if (idx < 0 || idx >= this._consoleCache.length || this._consoleCache[idx].type === 'spacing') return;
+
+        const entry = this._consoleCache[idx];
+        // Remove custom properties
+        delete entry.customFont;
+        delete entry.customSize;
+        delete entry.customAlign;
+
+        if (this.logArea) {
+            const el = this.logArea.querySelector(`[data-id="${entry.id}"]`);
+            if (el) {
+                // Re-apply style (will fallback to defaults now that custom props are gone)
+                this._applyLineStyle(el, entry);
                 this._resizeDynamicSizes();
             }
         }
@@ -909,46 +942,61 @@
     // ---- persistence ----
     getConsoleAsArray () { 
       try { 
-        // Filter out temporary/internal data like _dotsElement state if it were accidentally saved
-        return JSON.stringify(this._consoleCache); 
+        // Filter out auto-spacing entries so they don't persist in save files
+        const savable = this._consoleCache.filter(e => !e.isAutoSpacing);
+        return JSON.stringify(savable); 
       } catch (e) { 
         return '[]'; 
       } 
     }
+
     setConsoleFromArray (args) {
       try {
         const arr = JSON.parse(String(args.ARRAY || '[]'));
         if (!Array.isArray(arr)) return;
 
-        this._consoleCache = arr.map(e => {
+        this._consoleCache = [];
+        this._nextId = 1;
+
+        for (const e of arr) {
             const base = {
-                id: e.id ? Number(e.id) : this._nextId++,
+                id: this._nextId++, // Generate fresh IDs
                 type: e.type || 'text',
                 ts: e.ts ? Number(e.ts) : Date.now(),
             };
 
             if (base.type === 'spacing') {
-                return Object.assign(base, {
+                this._consoleCache.push(Object.assign(base, {
                     spacingHeight: Number(e.spacingHeight) || 0,
+                    isAutoSpacing: false // Loaded manually, so not auto
+                }));
+            } else {
+                // Text or Image
+                const entry = Object.assign(base, {
+                    text: String(e.text || ''),
+                    src: e.src, 
+                    width: e.width, 
+                    height: e.height,
+                    roundness: e.roundness,
+                    colorRaw: String(e.colorRaw || '#FFFFFF'),
+                    customFont: e.customFont,
+                    customSize: e.customSize,
+                    customAlign: e.customAlign
                 });
+                this._consoleCache.push(entry);
+
+                // If it was an image, re-inject the auto spacing
+                if (entry.type === 'image') {
+                    this._consoleCache.push({
+                        id: this._nextId++,
+                        type: 'spacing',
+                        spacingHeight: 10,
+                        isAutoSpacing: true
+                    });
+                }
             }
+        }
 
-            // Default for text/image
-            return Object.assign(base, {
-                text: String(e.text || ''),
-                src: e.src, 
-                width: e.width, 
-                height: e.height,
-                roundness: e.roundness, // NEW
-                colorRaw: String(e.colorRaw || '#FFFFFF'),
-                customFont: e.customFont,
-                customSize: e.customSize,
-                customAlign: e.customAlign
-            });
-        });
-
-        const maxId = this._consoleCache.reduce((m, x) => Math.max(m, x.id || 0), 0);
-        this._nextId = Math.max(this._nextId, maxId + 1);
         if (this.logArea) this._restoreConsoleCache();
       } catch (e) {
           console.error('Failed to load console from JSON:', e);
