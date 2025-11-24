@@ -225,12 +225,7 @@
                 loadedImages[key] = await this._loadSliceImage(target, key);
             }));
 
-            // Check if any images are actually loaded
             const hasImages = Object.values(loadedImages).some(img => img !== null);
-
-            // Font String Construction
-            // We trust the user's input. If it's invalid, Canvas falls back to default.
-            // We append a fallback stack just in case.
             const fontString = `bold ${fontSize}px "${fontName}", sans-serif`;
 
             // 2. Measure Text
@@ -253,13 +248,11 @@
                 canvas.width = boxW;
                 canvas.height = boxH;
 
-                // Fill Background
                 if (bgColor) {
                     ctx.fillStyle = bgColor;
                     ctx.fillRect(0, 0, boxW, boxH);
                 }
 
-                // Draw Text
                 ctx.font = fontString;
                 ctx.fillStyle = color;
                 ctx.textAlign = 'center';
@@ -307,7 +300,7 @@
             ctx.clearRect(0, 0, finalW, finalH);
             ctx.imageSmoothingEnabled = false;
 
-            // --- TINTING HELPER ---
+            // --- TINTING HELPER (UPDATED for "Exact" Colors) ---
             const drawTinted = (img, x, y, w, h) => {
                 if (!img) return;
 
@@ -323,19 +316,16 @@
                 const tCtx = tCan.getContext('2d');
                 tCtx.imageSmoothingEnabled = false;
 
-                // 1. Grayscale
-                tCtx.filter = 'grayscale(100%)';
+                // 1. Draw the image (Mask)
                 tCtx.drawImage(img, 0, 0, img.width, img.height, 0, 0, w, h);
-                tCtx.filter = 'none';
 
-                // 2. Multiply Tint
-                tCtx.globalCompositeOperation = 'multiply';
+                // 2. Source-In Composite
+                // This replaces the RGB channels of the image with the fill color,
+                // while preserving the original Alpha channel.
+                // This ensures the color is EXACTLY what the user picked, not a darkened multiply blend.
+                tCtx.globalCompositeOperation = 'source-in';
                 tCtx.fillStyle = bgColor;
                 tCtx.fillRect(0, 0, w, h);
-
-                // 3. Mask Alpha
-                tCtx.globalCompositeOperation = 'destination-in';
-                tCtx.drawImage(img, 0, 0, img.width, img.height, 0, 0, w, h);
 
                 ctx.drawImage(tCan, x, y);
             };
@@ -343,7 +333,6 @@
             // -- Drawing Slices --
             if (iC) drawTinted(iC, leftW, topH, contentW, contentH);
             else if (bgColor) {
-                // If no center slice, plain fill
                 ctx.fillStyle = bgColor;
                 ctx.fillRect(leftW, topH, contentW, contentH);
             }
@@ -372,6 +361,39 @@
             return canvas;
         }
 
+        // Apply a patch to the target to detect costume changes
+        _patchTargetCostumeSwitch(target) {
+            if (target._bubblePatchInstalled) return;
+            
+            target._bubblePatchInstalled = true;
+            const originalSetCostume = target.setCostume;
+
+            // Override setCostume
+            target.setCostume = function(index, ...args) {
+                // Before switching, check if the current costume was a bubble
+                const currentCostumeIndex = this.currentCostume;
+                const currentCostume = this.sprite.costumes[currentCostumeIndex];
+
+                if (currentCostume && currentCostume._originalSkinId) {
+                    // It was a bubble! Revert it.
+                    // 1. Destroy the temporary bubble skin to free memory
+                    if (currentCostume._bubbleSkinId) {
+                        this.renderer.destroySkin(currentCostume._bubbleSkinId);
+                    }
+                    
+                    // 2. Restore the original skin ID
+                    currentCostume.skinId = currentCostume._originalSkinId;
+                    
+                    // 3. Cleanup our custom properties
+                    delete currentCostume._originalSkinId;
+                    delete currentCostume._bubbleSkinId;
+                }
+
+                // Proceed with the actual switch
+                return originalSetCostume.call(this, index, ...args);
+            };
+        }
+
         async createBubble(args, util) {
             const text = String(args.TEXT);
             const font = String(args.FONT);
@@ -383,24 +405,36 @@
 
             const canvas = await this._generateBubbleCanvas(text, font, size, cornerSize, padding, color, bgColor, util.target);
             
-            // --- UPDATED METHOD (Similar to Peng3D) ---
-            // Instead of creating a NEW skin ID, we update the EXISTING skin ID of the current costume.
-            // This is often more reliable for live updates.
-            
             const target = util.target;
             const costumeIndex = target.currentCostume;
             const costume = target.sprite.costumes[costumeIndex];
             
             if (!costume) return;
 
-            // We update the bitmap data of the current skin.
-            // Scale 1 is usually sufficient, or we could use window.devicePixelRatio if we wanted HD.
-            const scale = 1; 
+            // Ensure we are listening for costume switches on this target
+            this._patchTargetCostumeSwitch(target);
+
+            // Revert previous bubble skin if we are re-generating on the same costume
+            if (costume._bubbleSkinId && costume._originalSkinId) {
+                renderer.destroySkin(costume._bubbleSkinId);
+                // Note: We keep _originalSkinId as is
+            } else if (!costume._originalSkinId) {
+                // First time bubbling this costume: Save the original skin ID
+                costume._originalSkinId = costume.skinId;
+            }
+
+            // Create a NEW skin for the bubble
+            // We use createBitmapSkin instead of updateBitmapSkin to keep them separate
+            const bubbleSkinId = renderer.createBitmapSkin(canvas, 1);
             
-            // This function (updateBitmapSkin) exists on the renderer and updates the texture in-place.
-            renderer.updateBitmapSkin(costume.skinId, canvas, scale);
+            // Assign the new bubble skin to the costume
+            costume._bubbleSkinId = bubbleSkinId;
+            costume.skinId = bubbleSkinId;
             
-            // Trigger a visual update
+            // FORCE UPDATE: Tell the renderer explicitly to use the new skin ID for this target
+            renderer.updateDrawableSkin(target.drawableID, bubbleSkinId);
+            
+            // Trigger a visual update for bounds/collision
             target.emit('TARGET_WAS_DRAGGED');
         }
 
