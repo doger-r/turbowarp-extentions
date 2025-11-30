@@ -2,18 +2,13 @@
   'use strict';
 
   /**
-   * Console Extension v6.6 (Modified)
-   * * Changes v6.6:
-   * - Added 'set browser autocorrect to [ENABLED]' block.
-   * - Added 'input [SOURCE] selection [POSITION]' reporter block.
-   * - Modified scroll blocks to support '[TARGET]' selector for 'console' or 'input'.
-   * * Changes v6.5:
-   * - Fixed input height logic to prevent empty space (uses rows="1" + shrink-to-fit).
-   * - Changed 'Scroll' mode to scroll the entire console container horizontally (unified X).
-   * - Fixed text size multiplier ignoring values that resulted in <10px font size.
-   * * Changes v6.4:
-   * - Default image updated to https://extensions.turbowarp.org/dango.png
-   * - Added "set [PART] text wrapping to [MODE]" block.
+   * Console Extension v6.7 (Fixed & Enhanced)
+   * * Changes v6.7:
+   * - Decoupled Input from Console (Input can exist without Console history).
+   * - Fixed 'show input' forcing console to open.
+   * - Fixed Input visibility bugs (height calculation timing).
+   * - Added Color argument to 'log dots'.
+   * - Fixed 'log image' rendering and auto-sizing issues.
    */
 
   const BlockType = (Scratch && Scratch.BlockType) ? Scratch.BlockType : {
@@ -43,7 +38,7 @@
       this._nextId = 1;
       this._inputCache = '';
       this.lastInput = '';
-      this._autocorrectEnabled = false; // <-- NEW: Autocorrect state
+      this._autocorrectEnabled = false;
       
       // Autofill data
       this._commandRegistry = new Set();
@@ -68,8 +63,8 @@
         inputAlign: 'left',
         lineSpacing: 1.4,
         maxInputHeightPct: 40, 
-        consoleWrapping: 'wrap', // 'wrap' or 'scroll'
-        inputWrapping: 'wrap'    // 'wrap' or 'scroll'
+        consoleWrapping: 'wrap', 
+        inputWrapping: 'wrap'
       };
       this.style = Object.assign({}, this._defaults);
 
@@ -106,12 +101,10 @@
         'getConsoleAsArray','setConsoleFromArray','getConsoleLineCount','isConsoleShown','setSelectable',
         'setTimestampFormat','toggleInput','showInput','hideInput','setInputText','runInput','clearInput','setLogInput',
         'whenInput','getLastInput','getCurrentInput','isInputShown',
-        // NEW: Autocorrect and Selection
         'setAutocorrect', 'getSelectionPosition',
         'addCommand', 'removeCommand', 'clearCommands',
         'setColorPicker','gradientReporter','gradient3Reporter','gradient4Reporter','setFont','setTextSizeMultiplier','setAlignment','setLineSpacing','setInputPlaceholder','setInputMaxHeight','setTextWrapping',
         'resetStyling',
-        // MODIFIED: Scroll blocks
         'setScrollTo','getMaxScroll','getCurrentScroll','setAutoScroll','isAutoScroll'
       ];
       for (const m of methods) if (typeof this[m] === 'function') this[m] = this[m].bind(this);
@@ -137,7 +130,8 @@
           
           { opcode: 'logImage', blockType: BlockType.COMMAND, text: 'log image [SRC] size [W] x [H] roundness [R]', arguments: { SRC: { type: ArgumentType.STRING, defaultValue: 'https://extensions.turbowarp.org/dango.png' }, W: { type: ArgumentType.NUMBER, defaultValue: 0 }, H: { type: ArgumentType.NUMBER, defaultValue: 0 }, R: { type: ArgumentType.NUMBER, defaultValue: 4 } } },
           
-          { opcode: 'logDots', blockType: BlockType.COMMAND, text: 'log dots' },
+          // UPDATED: Added color argument
+          { opcode: 'logDots', blockType: BlockType.COMMAND, text: 'log dots in color [COLOR]', arguments: { COLOR: { type: ArgumentType.COLOR, defaultValue: '#FFFFFF' } } },
           
           { opcode: 'removeLine', blockType: BlockType.COMMAND, text: 'remove console line [INDEX]', arguments: { INDEX: { type: ArgumentType.NUMBER, defaultValue: 1 } } },
 
@@ -151,7 +145,6 @@
           { opcode: 'isConsoleShown', blockType: BlockType.BOOLEAN, text: 'console shown?' },
 
           { blockType: BlockType.LABEL, text: 'Scroll' },
-          // MODIFIED scroll blocks to include [TARGET] selector
           { opcode: 'setScrollTo', blockType: BlockType.COMMAND, text: 'set [TARGET] scroll to [Y]', arguments: { TARGET: { type: ArgumentType.STRING, menu: 'scrollTargetMenu', defaultValue: 'console' }, Y: { type: ArgumentType.NUMBER, defaultValue: 0 } } },
           { opcode: 'getMaxScroll', blockType: BlockType.REPORTER, text: '[TARGET] max scroll', arguments: { TARGET: { type: ArgumentType.STRING, menu: 'scrollTargetMenu', defaultValue: 'console' } } },
           { opcode: 'getCurrentScroll', blockType: BlockType.REPORTER, text: '[TARGET] current scroll', arguments: { TARGET: { type: ArgumentType.STRING, menu: 'scrollTargetMenu', defaultValue: 'console' } } },
@@ -175,7 +168,6 @@
           { opcode: 'getCurrentInput', blockType: BlockType.REPORTER, text: 'current input' },
           { opcode: 'isInputShown', blockType: BlockType.BOOLEAN, text: 'input shown?' },
 
-          // NEW BLOCKS
           { opcode: 'setAutocorrect', blockType: BlockType.COMMAND, text: 'set browser autocorrect to [ENABLED]', arguments: { ENABLED: { type: ArgumentType.BOOLEAN, defaultValue: false } } },
           { opcode: 'getSelectionPosition', blockType: BlockType.REPORTER, text: 'input [SOURCE] selection [POSITION]', arguments: { 
               SOURCE: { type: ArgumentType.STRING, menu: 'inputSourceMenu', defaultValue: 'current' }, 
@@ -211,7 +203,6 @@
           alignmentMenu: ['left', 'center', 'right'],
           wrappingParts: ['console', 'input'],
           wrappingMode: ['wrap', 'scroll'],
-          // NEW menus for scroll and selection
           scrollTargetMenu: ['console', 'input'],
           inputSourceMenu: ['current', 'last'],
           selectionPositionMenu: ['start', 'end']
@@ -228,8 +219,7 @@
         
         .console-line { 
           display: block; 
-          /* wrapping now handled by container settings or inline styles */
-          width: fit-content; /* allows expansion for scrolling */
+          width: fit-content; 
           min-width: 100%;
         }
         .console-spacing { width: 100%; display: block; } 
@@ -250,9 +240,8 @@
 
         .console-input::placeholder { color: var(--console-input-placeholder-color, ${this._defaults.inputPlaceholderColorRaw}) !important; opacity: 1 !important; }
         .console-line span { vertical-align: middle; }
-        .console-img { vertical-align: middle; max-width: 100%; } 
+        .console-img { vertical-align: middle; max-width: 100%; display: inline-block; } 
         
-        /* Suggestion Box Styles */
         .console-suggestions {
           position: absolute;
           bottom: 100%; left: 0; right: 0;
@@ -347,6 +336,7 @@
         this._restoreConsoleCache();
       }
 
+      // FIXED: Input UI check no longer strictly depends on consoleOverlay existence for logic
       if (this.inputVisible && (!this.inputOverlay || !this.stage.contains(this.inputOverlay))) {
         if (this.inputOverlay && this.inputField && typeof this.inputField.value === 'string') this._inputCache = this.inputField.value;
         this.inputOverlay = null;
@@ -366,25 +356,19 @@
       const scale = stageH / 360;
       const base = 14;
 
-      // Base Globals
-      // FIX: Changed min clamp from 10 to 1 to allow small text multipliers
       this._computedTsPx = Math.max(1, base * scale * (this.style.sizeTimestamp || 1));
       this._computedInputPx = Math.max(1, base * scale * (this.style.sizeInput || 1));
 
       // Resize all lines in logArea
       if (this.logArea) {
         for (const line of Array.from(this.logArea.children)) {
-          if (line.classList.contains('console-spacing')) continue; // Skip spacing elements
+          if (line.classList.contains('console-spacing')) continue; 
           
-          // Check for line-specific multiplier override
           const lineMult = line.dataset.sizeMult ? Number(line.dataset.sizeMult) : (this.style.sizeText || 1);
-          // FIX: Changed min clamp from 10 to 1
           const linePx = Math.max(1, base * scale * lineMult);
 
           const spans = line.querySelectorAll('span');
-          // spans[0] is timestamp, spans[1] is text content
           if (spans[0]) spans[0].style.fontSize = `${this._computedTsPx}px`;
-          // If type=text, spans[1] exists. If type=image, it might be an img tag (no font size needed).
           if (spans[1]) spans[1].style.fontSize = `${linePx}px`;
         }
       }
@@ -395,7 +379,6 @@
         this.inputField.style.textAlign = this.style.inputAlign;
         this.inputField.style.lineHeight = '1.5';
         
-        // Auto-resize logic based on max height percentage
         this._updateInputHeight();
       }
       if (this.suggestionBox) {
@@ -403,6 +386,7 @@
         this.suggestionBox.style.fontFamily = this.style.fontInput;
       }
 
+      // FIXED: Only apply padding to console overlay if it exists
       if (this.consoleOverlay && this.inputField && this.inputVisible) {
         const inputHt = this.inputField.offsetHeight || (this._computedInputPx + 36);
         this.consoleOverlay.style.paddingBottom = `${inputHt}px`;
@@ -415,26 +399,21 @@
     _updateInputHeight() {
         if (!this.inputField || !this.stage) return;
         
-        // FIX: Set height to 'auto' or 1px first to force a shrink-to-fit recalculation
-        // This ensures scrollHeight accurately reflects the content, even when shrinking from a larger size.
-        this.inputField.style.height = '1px';
+        this.inputField.style.height = '1px'; // Force shrink to calculate scrollHeight
         
         const stageH = this.stage.clientHeight || 360;
         const maxPct = this.style.maxInputHeightPct || 40; 
         const maxHeightPx = stageH * (maxPct / 100);
         
-        // Calculate the height of content
         const contentHeight = this.inputField.scrollHeight;
-
-        // Apply clamping: At most Max%
-        // We do NOT clamp to min-height of 1 line here because scrollHeight on rows="1" handles that naturally
         const finalHeight = Math.min(contentHeight, maxHeightPx);
         
-        this.inputField.style.height = `${finalHeight}px`;
+        // Ensure at least some height if contentHeight is weirdly 0
+        const minH = this._computedInputPx ? (this._computedInputPx + 20) : 30;
+        this.inputField.style.height = `${Math.max(minH, finalHeight)}px`;
 
-        // Update console padding to match input height so text doesn't hide behind input
         if (this.consoleOverlay && this.inputVisible) {
-            this.consoleOverlay.style.paddingBottom = `${finalHeight}px`;
+            this.consoleOverlay.style.paddingBottom = `${Math.max(minH, finalHeight)}px`;
         }
     }
 
@@ -455,14 +434,10 @@
         userSelect: this.textSelectable ? 'text' : 'none'
       });
       
-      // Initial Wrapping Style for Container
       this._applyConsoleWrappingToContainer(overlay, this.style.consoleWrapping);
 
       const logArea = document.createElement('div');
       logArea.style.flex = '1';
-      // If wrapping is 'scroll', we let the parent overlay handle scrolling X, but logArea needs to allow expansion
-      // Actually, logArea *is* the scrolling container for Y. 
-      // For unified X scrolling, logArea should probably be the one handling overflow-x too.
       logArea.style.overflowY = 'auto';
       logArea.style.WebkitOverflowScrolling = 'touch';
       
@@ -487,7 +462,6 @@
       if (this.inputOverlay && this.stage.contains(this.inputOverlay)) return;
 
       const overlay = document.createElement('div');
-      // Ensure bottom: 0 is respected and container handles layout
       Object.assign(overlay.style, { 
           position: 'absolute', left: '0', right: '0', bottom: '0', 
           zIndex: '60', 
@@ -503,15 +477,12 @@
       overlay.appendChild(suggestionBox);
       this.suggestionBox = suggestionBox;
 
-      // CHANGED: Use textarea for multiline support
       const input = document.createElement('textarea');
       input.className = 'console-input';
-      input.setAttribute('rows', '1'); // FIX: Start with 1 row explicitly
-      
-      // NEW: Autocorrect control
-      input.setAttribute('autocomplete', 'off'); // Often needed alongside autocorrect/spellcheck control
-      input.setAttribute('autocorrect', this._autocorrectEnabled ? 'on' : 'off'); // Set initial state
-      input.setAttribute('spellcheck', this._autocorrectEnabled ? 'true' : 'false'); // Spellcheck is often bundled with autocorrect
+      input.setAttribute('rows', '1'); 
+      input.setAttribute('autocomplete', 'off'); 
+      input.setAttribute('autocorrect', this._autocorrectEnabled ? 'on' : 'off'); 
+      input.setAttribute('spellcheck', this._autocorrectEnabled ? 'true' : 'false'); 
       
       Object.assign(input.style, {
         width: '100%', border: 'none', outline: 'none', padding: '10px',
@@ -521,10 +492,10 @@
         boxSizing: 'border-box',
         resize: 'none', 
         overflowY: 'auto',
-        verticalAlign: 'bottom', // Ensures no descent gap
-        margin: '0', // Ensures touching edges
+        verticalAlign: 'bottom', 
+        margin: '0', 
         display: 'block',
-        lineHeight: '1.5' // Explicit line height for height calcs
+        lineHeight: '1.5' 
       });
       
       this._applyWrappingStyle(input, this.style.inputWrapping);
@@ -541,7 +512,7 @@
             input.value = chosen;
             this._inputCache = chosen;
             this._hideSuggestions();
-            this._updateInputHeight(); // Resize on fill
+            this._updateInputHeight(); 
           }
           return;
         }
@@ -560,29 +531,24 @@
             return;
         }
         if (e.key === 'Enter') {
-            // CHANGED: Allow Shift+Enter for newlines
             if (e.shiftKey) {
-                // Allow default behavior (insert newline)
-                // Schedule resize after DOM update
                 setTimeout(() => this._updateInputHeight(), 0);
                 return;
             }
-
-            // Normal Enter: Submit
             e.preventDefault();
             if (this.suggestionBox.style.display === 'flex' && this._suggestionIndex !== -1) {
                 const chosen = this._activeSuggestions[this._suggestionIndex];
                 input.value = chosen;
                 this._inputCache = chosen;
                 this._hideSuggestions();
-                this._updateInputHeight(); // Resize
+                this._updateInputHeight(); 
             } else {
                 const txt = input.value;
                 input.value = '';
                 this._inputCache = '';
                 this._hideSuggestions();
                 this._dispatchInput(txt, true);
-                this._updateInputHeight(); // Reset size
+                this._updateInputHeight(); 
             }
         }
       });
@@ -590,7 +556,7 @@
       input.addEventListener('input', () => { 
           this._inputCache = input.value; 
           this._updateSuggestions(input.value);
-          this._updateInputHeight(); // Auto-resize on typing
+          this._updateInputHeight(); 
       });
       input.addEventListener('blur', () => { 
         this._inputCache = input.value; 
@@ -605,7 +571,12 @@
       this.inputField = input;
       this._applyInputBackground(this.style.inputBG);
       this._applyInputTextColor(this.style.inputTextRaw);
-      this._resizeDynamicSizes();
+      
+      // FIXED: Force height update in next frame to prevent 0-height bug on first show
+      requestAnimationFrame(() => {
+          this._resizeDynamicSizes();
+          this._updateInputHeight();
+      });
     }
 
     // ---- Autofill Logic ----
@@ -619,7 +590,6 @@
             return;
         }
         const lower = text.toLowerCase();
-        // Simple heuristic: match against the last line if multiple lines exist, or whole text
         const lines = text.split('\n');
         const currentLine = lines[lines.length - 1].trim();
         
@@ -776,7 +746,6 @@
       if (entry.type === 'spacing') {
         const spacer = document.createElement('div');
         spacer.className = 'console-spacing';
-        // Use margin-top to separate, maintaining padding from consoleOverlay
         spacer.style.marginTop = `${Math.max(0, Number(entry.spacingHeight) || 0)}px`;
         spacer.dataset.id = String(entry.id);
         return spacer;
@@ -786,8 +755,6 @@
       container.className = 'console-line';
       container.style.lineHeight = String(this.style.lineSpacing || this._defaults.lineSpacing);
 
-      // Inline styles for lines now depend on container setting mostly, but
-      // if wrapping is 'scroll', we force lines to fit content so they expand container
       if (this.style.consoleWrapping === 'scroll') {
         container.style.whiteSpace = 'pre';
         container.style.wordBreak = 'normal';
@@ -796,56 +763,46 @@
         container.style.wordBreak = 'break-word';
       }
 
-      // Initial dataset population
       container.dataset.id = String(entry.id);
       container.dataset.ts = String(entry.ts || Date.now());
 
-      // --- TIMESTAMP SPAN ---
       const tsSpan = document.createElement('span');
       tsSpan.className = 'console-timestamp';
-      // Timestamp color
       this._applyInlineTextColor(tsSpan, this.style.timestampTextRaw || this._defaults.timestampTextRaw);
 
-      // We rely on _resizeDynamicSizes to set the correct pixel size
       const formatted = (this._timestampFormat === 'off') ? '' : this._formatTimestamp(Number(container.dataset.ts));
       tsSpan.textContent = formatted ? `[${formatted}] ` : '';
       container.appendChild(tsSpan);
 
       if (entry.type === 'image') {
-        // --- IMAGE ENTRY ---
         const img = document.createElement('img');
         img.className = 'console-img';
         img.src = entry.src || '';
+        img.referrerPolicy = 'no-referrer'; // FIXED: helps with external images
         
         const valW = Number(entry.width) || 0;
         const valH = Number(entry.height) || 0;
         const roundness = Number(entry.roundness) || 4;
 
-        // --- SIZING ---
         if (valW === 0 && valH === 0) {
-          // Default: 100% width, auto height
-          img.style.width = '100%';
+          img.style.width = 'auto'; // allow natural size, max-width handled by css
+          img.style.maxWidth = '100%';
           img.style.height = 'auto';
         } else if (valW === 0) {
-          // Width 0, Height set -> Scale width proportionally
           img.style.height = `${valH}px`;
           img.style.width = 'auto';
         } else if (valH === 0) {
-          // Height 0, Width set -> Scale height proportionally
           img.style.width = `${valW}px`;
           img.style.height = 'auto';
         } else {
-          // Both set -> Stretch/Fix to dimensions
           img.style.width = `${valW}px`;
           img.style.height = `${valH}px`;
         }
         
-        // --- ROUNDNESS ---
         img.style.borderRadius = `${Math.max(0, roundness)}px`;
+        img.style.display = 'block'; // Ensure image takes its own line block
 
-        // --- AUTO SCROLL FIX ON LOAD ---
         img.onload = () => {
-          // If auto-scroll is enabled, force scroll to bottom when image loads (height changes)
           if (this._autoScrollEnabled && this.logArea) {
             this._instantScrollToBottom();
           }
@@ -853,38 +810,26 @@
 
         container.appendChild(img);
       } else {
-        // --- TEXT ENTRY (type=text or anything else defaulting to text) ---
         const msgSpan = document.createElement('span');
         msgSpan.textContent = entry.text;
-        msgSpan.style.fontFamily = this.style.fontText; // Initial global
+        msgSpan.style.fontFamily = this.style.fontText; 
         msgSpan.style.display = 'inline';
         this._applyInlineTextColor(msgSpan, entry.colorRaw || '#FFFFFF');
         container.appendChild(msgSpan);
       }
 
-      // Apply line-specific overrides if they exist in cache
       this._applyLineStyle(container, entry);
 
       return container;
     }
 
-    // New Helper: Applies specific overrides to a DOM element
     _applyLineStyle (el, entry) {
       if (!el) return;
-
-      // 1. Alignment
-      // Use custom alignment if present, otherwise global
       el.style.textAlign = entry.customAlign ? entry.customAlign : this.style.textAlign;
-
-      // 2. Font Family (Text Span)
-      const msgSpan = el.querySelectorAll('span')[1]; // [0] is ts, [1] is msg
+      const msgSpan = el.querySelectorAll('span')[1];
       if (msgSpan && entry.type === 'text') {
         msgSpan.style.fontFamily = entry.customFont ? entry.customFont : this.style.fontText;
       }
-
-      // 3. Size Multiplier
-      // We store the specific multiplier in dataset.
-      // _resizeDynamicSizes will read this on next pass (called immediately after this).
       if (entry.customSize) {
         el.dataset.sizeMult = String(entry.customSize);
       } else {
@@ -892,13 +837,12 @@
       }
     }
 
-    // Helper for Input Wrapping vs Scrolling
     _applyWrappingStyle (el, mode) {
       if (!el) return;
       if (mode === 'scroll') {
         el.style.whiteSpace = 'pre';
         el.style.wordBreak = 'normal';
-      } else { // 'wrap'
+      } else { 
         el.style.whiteSpace = 'pre-wrap';
         el.style.wordBreak = 'break-word';
       }
@@ -907,8 +851,8 @@
     _applyConsoleWrappingToContainer (el, mode) {
       if (!el) return;
       if (mode === 'scroll') {
-        el.style.overflowX = 'auto'; // Container scrolls horizontally
-      } else { // 'wrap'
+        el.style.overflowX = 'auto';
+      } else { 
         el.style.overflowX = 'hidden';
       }
     }
@@ -945,13 +889,12 @@
       this.logArea.appendChild(el);
 
       if (this._timestampFormat === 'relative' && this._io) {
-        // Only observe if it's a regular line (not spacing)
         if (entry.type !== 'spacing') {
           try { this._io.observe(el); } catch (e) {}
         }
       }
 
-      this._resizeDynamicSizes(); // This will apply the correct pixel size based on dataset.sizeMult
+      this._resizeDynamicSizes(); 
       
       if (!skipAutoScroll && this._autoScrollEnabled && priorAtBottom) this._instantScrollToBottom();
     }
@@ -985,7 +928,7 @@
 
     // ---- logging & message methods ----
     _log (text, color, type = 'text', entryOverride = {}) {
-      if (!text) return;
+      if (!text && type === 'text') return; // Only skip empty text if type is text
 
       const entry = Object.assign({
         id: this._nextId++,
@@ -999,7 +942,6 @@
       if (this._dotsInterval) this._stopDots();
       this._addLineToDOM(entry);
 
-      // If it's an image, auto-add a 10px spacing below it, which will be maintained if the image is removed
       if (type === 'image' && (entry.width > 0 || entry.height > 0)) {
         this._addSpacing(10, true);
       }
@@ -1007,29 +949,36 @@
 
     logMessage (args) { this._log(args.TEXT, args.COLOR); }
     
+    // FIXED: Passed parameters correctly to _log
     logImage (args) {
       this._log('', null, 'image', {
         src: String(args.SRC || ''),
         width: Number(args.W) || 0,
         height: Number(args.H) || 0,
         roundness: Number(args.R) || 4,
-        colorRaw: String('#FFFFFF') // Not used for images, but for structure
+        colorRaw: String('#FFFFFF')
       });
     }
 
     // --- Dots animation ---
     _dotsInterval = null;
-    logDots () {
+    logDots (args) {
       const text = '...';
-      const color = '#FFFFFF';
+      const color = args.COLOR || '#FFFFFF'; // FIXED: Use color arg
+      
       const lastEntry = this._consoleCache[this._consoleCache.length - 1];
 
-      // If the last entry is already the dots animation, just update its timestamp for visibility/relevance
+      // If existing dots, update
       if (lastEntry && lastEntry.type === 'dots') {
         lastEntry.ts = Date.now();
+        lastEntry.colorRaw = color; // Update color of existing
         if (this.logArea) {
           const el = this.logArea.querySelector(`[data-id="${lastEntry.id}"]`);
-          if (el) el.dataset.ts = String(lastEntry.ts);
+          if (el) {
+             el.dataset.ts = String(lastEntry.ts);
+             const msgSpan = el.querySelectorAll('span')[1];
+             if(msgSpan) this._applyInlineTextColor(msgSpan, color);
+          }
         }
       } else {
         this._log(text, color, 'dots');
@@ -1038,7 +987,6 @@
       if (this._dotsInterval) return;
 
       this._dotsInterval = setInterval(() => {
-        // Find the dots entry
         const dotsEntry = this._consoleCache.find(e => e.type === 'dots');
         if (!dotsEntry) {
           this._stopDots();
@@ -1051,7 +999,6 @@
         
         dotsEntry.text = '.'.repeat(currentDots);
         
-        // Update DOM
         if (this.logArea) {
           const el = this.logArea.querySelector(`[data-id="${dotsEntry.id}"]`);
           if (el) {
@@ -1061,18 +1008,17 @@
         }
       }, 500);
     }
+    
     _stopDots () {
       if (this._dotsInterval) clearInterval(this._dotsInterval);
       this._dotsInterval = null;
 
-      // Remove the dots entry from cache and DOM
       const idx = this._consoleCache.findIndex(e => e.type === 'dots');
       if (idx !== -1) {
         this.removeLine({ INDEX: this._getVisualIndex(idx) });
       }
     }
 
-    // --- Line Management ---
     removeLine (args) {
       const visibleIndex = Math.floor(Number(args.INDEX) || 1);
       const idx = this._getRealIndex(visibleIndex);
@@ -1089,7 +1035,6 @@
           el.remove();
         }
         
-        // Remove associated auto-spacing if it exists immediately after this line
         if (this._consoleCache[idx+1] && this._consoleCache[idx+1].type === 'spacing' && this._consoleCache[idx+1].isAutoSpacing) {
            const spacingEntry = this._consoleCache[idx+1];
            const spacingEl = this.logArea.querySelector(`[data-id="${spacingEntry.id}"]`);
@@ -1099,9 +1044,8 @@
         
         this._consoleCache.splice(idx, 1);
         
-        if (this.logArea.scrollHeight) this.logArea.scrollTop = prevScroll; // simplistic maintain
+        if (this.logArea.scrollHeight) this.logArea.scrollTop = prevScroll; 
       } else {
-        // Remove associated auto-spacing if it exists immediately after this line
         if (this._consoleCache[idx+1] && this._consoleCache[idx+1].type === 'spacing' && this._consoleCache[idx+1].isAutoSpacing) {
             this._consoleCache.splice(idx+1, 1);
         }
@@ -1109,7 +1053,6 @@
       }
     }
 
-    // Used by removeLine to find the correct entry
     _getVisualIndex(cacheIndex) {
         let count = 0;
         for (let i = 0; i <= cacheIndex; i++) {
@@ -1121,26 +1064,22 @@
     }
 
     _addSpacing (h, isAuto = false) {
-      // Check if the last item is already an auto-spacing. If so, just update its height.
       const lastEntry = this._consoleCache[this._consoleCache.length - 1];
       if (lastEntry && lastEntry.type === 'spacing' && lastEntry.isAutoSpacing) {
-        lastEntry.spacingHeight = h; // Update source flag
-        // Update DOM if visible
+        lastEntry.spacingHeight = h; 
         if (this.logArea) {
             const el = this.logArea.querySelector(`[data-id="${lastEntry.id}"]`);
             if (el) el.style.marginTop = `${h}px`;
         }
         return;
       }
-      // Otherwise create new spacing entry
-      if (h === 0) return; // Don't add 0px new spacing
+      if (h === 0) return; 
       const entry = { id: this._nextId++, type: 'spacing', spacingHeight: h, isAutoSpacing: isAuto };
       this._consoleCache.push(entry);
       if (this._dotsInterval) this._stopDots();
       this._addLineToDOM(entry);
     }
 
-    // -- HELPER: Get actual cache index from visual line index (skipping spacing) --
     _getRealIndex(visualIndex) {
       let count = 0;
       for (let i = 0; i < this._consoleCache.length; i++) {
@@ -1152,7 +1091,6 @@
       return -1;
     }
 
-    // -- Style Line Methods --
     styleLine (args) {
       const visibleIndex = Math.floor(Number(args.INDEX) || 1);
       const idx = this._getRealIndex(visibleIndex);
@@ -1172,14 +1110,12 @@
       }
     }
 
-    // Reset Line Style
     resetLineStyle (args) {
       const visibleIndex = Math.floor(Number(args.INDEX) || 1);
       const idx = this._getRealIndex(visibleIndex);
       if (idx === -1) return;
 
       const entry = this._consoleCache[idx];
-      // Remove custom properties
       delete entry.customFont;
       delete entry.customSize;
       delete entry.customAlign;
@@ -1193,10 +1129,8 @@
       }
     }
 
-    // ---- persistence ----
     getConsoleAsArray () {
       try {
-        // Filter out auto-spacing entries so they don't persist in save files
         const savable = this._consoleCache.filter(e => !e.isAutoSpacing);
         return JSON.stringify(savable);
       } catch (e) { return '[]'; }
@@ -1212,7 +1146,7 @@
         
         for (const e of arr) {
           const base = {
-            id: this._nextId++, // Generate fresh IDs
+            id: this._nextId++, 
             type: e.type || 'text',
             ts: e.ts ? Number(e.ts) : Date.now(),
           };
@@ -1220,10 +1154,9 @@
           if (base.type === 'spacing') {
             this._consoleCache.push(Object.assign(base, {
               spacingHeight: Number(e.spacingHeight) || 0,
-              isAutoSpacing: false // Loaded manually, so not auto
+              isAutoSpacing: false 
             }));
           } else {
-            // Text or Image
             const entry = Object.assign(base, {
               text: String(e.text || ''),
               src: e.src,
@@ -1237,29 +1170,22 @@
             });
             this._consoleCache.push(entry);
 
-            // If it was an image, re-inject the auto spacing
             if (entry.type === 'image' && (entry.width > 0 || entry.height > 0)) {
                 this._consoleCache.push({ id: this._nextId++, type: 'spacing', spacingHeight: 10, isAutoSpacing: true });
             }
           }
         }
-        
-        // Stop dots if they were active
         if (this._dotsInterval) this._stopDots();
-
         this._restoreConsoleCache();
-
       } catch (e) {}
     }
 
     getConsoleLineCount () { 
-      // Count only non-spacing entries
       return this._consoleCache.filter(e => e.type !== 'spacing').length;
     }
 
     isConsoleShown () { return !!this.consoleVisible; }
     
-    // Allow the text in the console to be selectable (or not)
     setSelectable (args) {
         this.textSelectable = !!args.ENABLED;
         if (this.consoleOverlay) {
@@ -1279,7 +1205,7 @@
         this._setupObserverForRelative();
       } 
       this._refreshTimestamps();
-      this._resizeDynamicSizes(); // Recalculate size since timestamps might change height
+      this._resizeDynamicSizes(); 
     }
 
     _formatTimestamp (ms) {
@@ -1302,7 +1228,6 @@
         const ampm = h < 12 ? 'AM' : 'PM';
         return `${hh}:${String(min).padStart(2,'0')}:${String(s).padStart(2,'0')} ${ampm}`;
       }
-      // 24h format
       return `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
     }
 
@@ -1457,7 +1382,6 @@
           
           if (part === 'timestamp' && tsSpan) tsSpan.style.fontFamily = this.style.fontTimestamp;
           if (part === 'text' && msgSpan) {
-            // Only update if no custom font is applied
             if (!entry || !entry.customFont) msgSpan.style.fontFamily = this.style.fontText;
           }
         }
@@ -1491,7 +1415,6 @@
         for (const ch of Array.from(this.logArea.children)) {
           if (ch.classList.contains('console-spacing')) continue;
           const entry = this._consoleCache.find(e => String(e.id) === ch.dataset.id);
-          // Only update if no custom alignment is applied
           if (!entry || !entry.customAlign) ch.style.textAlign = this.style.textAlign;
         }
       }
@@ -1511,12 +1434,10 @@
     }
 
     setInputMaxHeight (args) {
-      // Enforce a sensible minimum (10%) to prevent input from disappearing
       this.style.maxInputHeightPct = Math.max(10, Math.min(100, Number(args.PERCENT) || 40));
       this._updateInputHeight();
     }
 
-    // NEW BLOCK: Set Text Wrapping
     setTextWrapping (args) {
       const part = String(args.PART || 'console').toLowerCase();
       const mode = String(args.MODE || 'wrap').toLowerCase() === 'scroll' ? 'scroll' : 'wrap';
@@ -1524,11 +1445,9 @@
       if (part === 'console') {
         this.style.consoleWrapping = mode;
         if (this.logArea) {
-          // FIX: Apply wrapping to container for unified X scroll
           this._applyConsoleWrappingToContainer(this.logArea, mode); 
           for (const line of Array.from(this.logArea.children)) {
             if (line.classList.contains('console-line')) {
-              // Lines must be 'pre' to overflow horizontally
               if (mode === 'scroll') {
                 line.style.whiteSpace = 'pre';
                 line.style.wordBreak = 'normal';
@@ -1543,14 +1462,14 @@
         this.style.inputWrapping = mode;
         if (this.inputField) {
           this._applyWrappingStyle(this.inputField, mode);
-          this._updateInputHeight(); // Recalculate height based on new wrapping
+          this._updateInputHeight(); 
         }
       }
     }
 
     resetStyling () {
       this.style = Object.assign({}, this._defaults);
-      this._disconnectObserverAndLoop(); // needed in case relative mode was active
+      this._disconnectObserverAndLoop(); 
       this._timestampFormat = 'off';
       this._refreshTimestamps();
       this.setLineSpacing({ SPACING: this.style.lineSpacing });
@@ -1563,7 +1482,7 @@
       this.setColorPicker({ PART: 'console background', COLOR: this.style.consoleBG });
       this.setColorPicker({ PART: 'input placeholder', COLOR: this.style.inputPlaceholderColorRaw });
       
-      this._autocorrectEnabled = false; // Reset autocorrect
+      this._autocorrectEnabled = false; 
       this.setAutocorrect({ ENABLED: false });
 
       this._resizeDynamicSizes();
@@ -1581,13 +1500,13 @@
       if (!this.consoleVisible) {
         this.consoleVisible = true;
         this._createConsole();
-        this._restoreConsoleCache(); // Ensure contents are in the DOM
-        if (this.inputVisible) { // If input is already showing, ensure it's re-created over console
+        this._restoreConsoleCache(); 
+        if (this.inputVisible) { 
             this.hideInput();
             this.showInput();
         }
         this._resizeDynamicSizes();
-        if (this.logArea) this.logArea.scrollTop = this.logArea.scrollHeight; // Scroll to bottom on show
+        if (this.logArea) this.logArea.scrollTop = this.logArea.scrollHeight; 
       }
     }
 
@@ -1598,7 +1517,13 @@
         this.logArea = null;
       }
       this.consoleVisible = false;
-      this.hideInput();
+      // FIXED: hideConsole does NOT force hideInput anymore.
+      
+      // If Input is visible, we need to remove padding because consoleOverlay is gone.
+      if (this.inputVisible && this.inputOverlay) {
+          // No op here really, just ensure proper state in ensureUI
+      }
+      
       this._disconnectObserverAndLoop();
     }
 
@@ -1606,7 +1531,7 @@
       if (this._dotsInterval) this._stopDots();
       this._consoleCache = [];
       this._nextId = 1;
-      this._scrollCache = 0; // Clear scroll cache
+      this._scrollCache = 0; 
       if (this.logArea) this.logArea.innerHTML = '';
       this._visibleSet.clear();
     }
@@ -1621,15 +1546,15 @@
 
     showInput () {
       if (!this.inputVisible) {
-        if (!this.consoleVisible) this.showConsole(); // Must have console to show input
+        // FIXED: Removed forced console show. Input can exist standalone.
         this.inputVisible = true;
         this._createInput();
         if (this.inputField) {
             this.inputField.value = this._inputCache;
-            this.inputField.focus(); // Focus on show
+            this.inputField.focus(); 
             this._updateInputHeight();
         }
-        if (this.consoleOverlay) { // Adjust console padding
+        if (this.consoleOverlay) { 
             const inputHt = this.inputField ? (this.inputField.offsetHeight || (this._computedInputPx + 36)) : 0;
             this.consoleOverlay.style.paddingBottom = `${inputHt}px`;
         }
@@ -1640,15 +1565,19 @@
       let priorAtBottom = false;
       try { priorAtBottom = this.logArea && (this.logArea.scrollTop + this.logArea.clientHeight) >= (this.logArea.scrollHeight - 5); } catch (e) { priorAtBottom = false; }
       
-      if (this.inputField) this._inputCache = this.inputField.value; // Cache current input
-      if (this.inputOverlay) this.inputOverlay.style.display = 'none';
+      if (this.inputField) this._inputCache = this.inputField.value; 
+      if (this.inputOverlay) {
+          this.inputOverlay.remove();
+          this.inputOverlay = null;
+          this.inputField = null;
+          this.suggestionBox = null;
+      }
       
       this.inputVisible = false;
-      this._hideSuggestions();
+      this._activeSuggestions = []; 
       
-      if (this.consoleOverlay) this.consoleOverlay.style.paddingBottom = ''; // Remove padding
+      if (this.consoleOverlay) this.consoleOverlay.style.paddingBottom = ''; 
       
-      // If we were at the bottom and remove the input, scroll to the new bottom
       if (this.logArea && priorAtBottom) this._instantScrollToBottom(); 
     }
 
@@ -1677,7 +1606,6 @@
     getCurrentInput () { return (this.inputField ? this.inputField.value : this._inputCache) || ''; }
     isInputShown () { return !!this.inputVisible; }
 
-    // NEW BLOCK: Autocorrect toggle
     setAutocorrect (args) {
         const enabled = !!args.ENABLED;
         this._autocorrectEnabled = enabled;
@@ -1687,18 +1615,14 @@
         }
     }
 
-    // NEW BLOCK: Selection position reporter
     getSelectionPosition (args) {
         const source = String(args.SOURCE || 'current').toLowerCase();
         const position = String(args.POSITION || 'start').toLowerCase();
 
         if (source === 'last') {
-            // Selection properties (selectionStart/End) are only relevant to the *live* input DOM element.
-            // For the historically saved 'last input' string, we return 0 as the concept does not apply.
             return 0;
         }
 
-        // Source is 'current'
         if (this.inputField) {
             if (position === 'start') {
                 return this.inputField.selectionStart || 0;
@@ -1737,38 +1661,31 @@
       }
     }
 
-    // Helper to get the target element (logArea or inputField) // <-- NEW HELPER
     _getScrollTarget(targetString) {
         const target = String(targetString || 'console').toLowerCase();
         if (target === 'input') {
             return this.inputField;
         }
-        // Default to console
         return this.logArea;
     }
 
     // ---- scroll ---- 
-    // MODIFIED: Accepts [TARGET]
     setScrollTo (args) {
         const targetEl = this._getScrollTarget(args.TARGET);
         const y = Number(args.Y || 0);
         
         if (targetEl) {
-            // We only limit the scroll to Y axis here, no X limitation
             const max = Math.max(0, targetEl.scrollHeight - targetEl.clientHeight);
             targetEl.scrollTop = Math.min(max, Math.max(0, y));
             
-            // Only update scroll cache for console, not input. Input's scroll state is volatile.
             if (targetEl === this.logArea) {
                  this._scrollCache = targetEl.scrollTop;
             }
         } else if (args.TARGET.toLowerCase() === 'console') {
-            // If console is not yet created, cache the scroll for later
             this._scrollCache = Math.max(0, y);
         }
     }
 
-    // MODIFIED: Accepts [TARGET]
     getMaxScroll (args) {
         const targetEl = this._getScrollTarget(args.TARGET);
         if (targetEl) {
@@ -1777,13 +1694,11 @@
         return 0; 
     }
 
-    // MODIFIED: Accepts [TARGET]
     getCurrentScroll (args) {
         const targetEl = this._getScrollTarget(args.TARGET);
         if (targetEl) {
             return targetEl.scrollTop;
         }
-        // Only return cached scroll for console if it's the target, otherwise 0
         if (args.TARGET.toLowerCase() === 'console') {
             return (this._scrollCache || 0);
         }
@@ -1798,7 +1713,6 @@
         return !!this._autoScrollEnabled;
     }
 
-    // Helper: applies console's cached scroll (only console uses cache)
     _applyCachedScroll () { 
         if (!this.logArea) return; 
         const max = Math.max(0, this.logArea.scrollHeight - this.logArea.clientHeight); 
@@ -1815,12 +1729,9 @@
         const prevBehavior = this.logArea.style.scrollBehavior || '';
         const prevOverflow = this.logArea.style.overflowY || '';
         
-        // Temporarily set scroll behavior to auto for instant scroll
         this.logArea.style.scrollBehavior = 'auto'; 
-        // Temporarily hide overflow to prevent scroll bar flicker on some browsers
         this.logArea.style.overflowY = 'hidden'; 
         
-        // Read offsetHeight to force layout/reflow before setting scrollTop
         void this.logArea.offsetHeight; 
         
         try { 
@@ -1828,7 +1739,6 @@
             this._scrollCache = this.logArea.scrollTop; 
         } catch (e) {}
 
-        // Restore original styles
         this.logArea.style.scrollBehavior = prevBehavior;
         this.logArea.style.overflowY = prevOverflow;
 
@@ -1837,7 +1747,6 @@
     }
   }
 
-  // register extension
   try {
     const instance = new ConsoleExtension();
     if (Scratch && Scratch.extensions && typeof Scratch.extensions.register === 'function') {
