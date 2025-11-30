@@ -2,7 +2,11 @@
   'use strict';
 
   /**
-   * Console Extension v6.5
+   * Console Extension v6.6 (Modified)
+   * * Changes v6.6:
+   * - Added 'set browser autocorrect to [ENABLED]' block.
+   * - Added 'input [SOURCE] selection [POSITION]' reporter block.
+   * - Modified scroll blocks to support '[TARGET]' selector for 'console' or 'input'.
    * * Changes v6.5:
    * - Fixed input height logic to prevent empty space (uses rows="1" + shrink-to-fit).
    * - Changed 'Scroll' mode to scroll the entire console container horizontally (unified X).
@@ -39,6 +43,7 @@
       this._nextId = 1;
       this._inputCache = '';
       this.lastInput = '';
+      this._autocorrectEnabled = false; // <-- NEW: Autocorrect state
       
       // Autofill data
       this._commandRegistry = new Set();
@@ -101,9 +106,13 @@
         'getConsoleAsArray','setConsoleFromArray','getConsoleLineCount','isConsoleShown','setSelectable',
         'setTimestampFormat','toggleInput','showInput','hideInput','setInputText','runInput','clearInput','setLogInput',
         'whenInput','getLastInput','getCurrentInput','isInputShown',
+        // NEW: Autocorrect and Selection
+        'setAutocorrect', 'getSelectionPosition',
         'addCommand', 'removeCommand', 'clearCommands',
         'setColorPicker','gradientReporter','gradient3Reporter','gradient4Reporter','setFont','setTextSizeMultiplier','setAlignment','setLineSpacing','setInputPlaceholder','setInputMaxHeight','setTextWrapping',
-        'resetStyling','setConsoleScrollTo','consoleMaxScroll','consoleCurrentScroll','setAutoScroll','isAutoScroll'
+        'resetStyling',
+        // MODIFIED: Scroll blocks
+        'setScrollTo','getMaxScroll','getCurrentScroll','setAutoScroll','isAutoScroll'
       ];
       for (const m of methods) if (typeof this[m] === 'function') this[m] = this[m].bind(this);
 
@@ -142,9 +151,11 @@
           { opcode: 'isConsoleShown', blockType: BlockType.BOOLEAN, text: 'console shown?' },
 
           { blockType: BlockType.LABEL, text: 'Scroll' },
-          { opcode: 'setConsoleScrollTo', blockType: BlockType.COMMAND, text: 'set console scroll to [Y]', arguments: { Y: { type: ArgumentType.NUMBER, defaultValue: 0 } } },
-          { opcode: 'consoleMaxScroll', blockType: BlockType.REPORTER, text: 'console max scroll' },
-          { opcode: 'consoleCurrentScroll', blockType: BlockType.REPORTER, text: 'console current scroll' },
+          // MODIFIED scroll blocks to include [TARGET] selector
+          { opcode: 'setScrollTo', blockType: BlockType.COMMAND, text: 'set [TARGET] scroll to [Y]', arguments: { TARGET: { type: ArgumentType.STRING, menu: 'scrollTargetMenu', defaultValue: 'console' }, Y: { type: ArgumentType.NUMBER, defaultValue: 0 } } },
+          { opcode: 'getMaxScroll', blockType: BlockType.REPORTER, text: '[TARGET] max scroll', arguments: { TARGET: { type: ArgumentType.STRING, menu: 'scrollTargetMenu', defaultValue: 'console' } } },
+          { opcode: 'getCurrentScroll', blockType: BlockType.REPORTER, text: '[TARGET] current scroll', arguments: { TARGET: { type: ArgumentType.STRING, menu: 'scrollTargetMenu', defaultValue: 'console' } } },
+          
           { opcode: 'setAutoScroll', blockType: BlockType.COMMAND, text: 'set autscroll to [ENABLED]', arguments: { ENABLED: { type: ArgumentType.BOOLEAN, defaultValue: true } } },
           { opcode: 'isAutoScroll', blockType: BlockType.BOOLEAN, text: 'is autoscroll on?' },
 
@@ -163,6 +174,13 @@
           { opcode: 'getLastInput', blockType: BlockType.REPORTER, text: 'last input' },
           { opcode: 'getCurrentInput', blockType: BlockType.REPORTER, text: 'current input' },
           { opcode: 'isInputShown', blockType: BlockType.BOOLEAN, text: 'input shown?' },
+
+          // NEW BLOCKS
+          { opcode: 'setAutocorrect', blockType: BlockType.COMMAND, text: 'set browser autocorrect to [ENABLED]', arguments: { ENABLED: { type: ArgumentType.BOOLEAN, defaultValue: false } } },
+          { opcode: 'getSelectionPosition', blockType: BlockType.REPORTER, text: 'input [SOURCE] selection [POSITION]', arguments: { 
+              SOURCE: { type: ArgumentType.STRING, menu: 'inputSourceMenu', defaultValue: 'current' }, 
+              POSITION: { type: ArgumentType.STRING, menu: 'selectionPositionMenu', defaultValue: 'start' } 
+          } },
 
           { blockType: BlockType.LABEL, text: 'Global Styling' },
           { opcode: 'setColorPicker', blockType: BlockType.COMMAND, text: 'set [PART] color to [COLOR]', arguments: { PART: { type: ArgumentType.STRING, menu: 'colorParts', defaultValue: 'console background' }, COLOR: { type: ArgumentType.COLOR, defaultValue: '#000000' } } },
@@ -192,7 +210,11 @@
           alignmentParts: ['text', 'input'],
           alignmentMenu: ['left', 'center', 'right'],
           wrappingParts: ['console', 'input'],
-          wrappingMode: ['wrap', 'scroll']
+          wrappingMode: ['wrap', 'scroll'],
+          // NEW menus for scroll and selection
+          scrollTargetMenu: ['console', 'input'],
+          inputSourceMenu: ['current', 'last'],
+          selectionPositionMenu: ['start', 'end']
         }
       };
     }
@@ -485,6 +507,12 @@
       const input = document.createElement('textarea');
       input.className = 'console-input';
       input.setAttribute('rows', '1'); // FIX: Start with 1 row explicitly
+      
+      // NEW: Autocorrect control
+      input.setAttribute('autocomplete', 'off'); // Often needed alongside autocorrect/spellcheck control
+      input.setAttribute('autocorrect', this._autocorrectEnabled ? 'on' : 'off'); // Set initial state
+      input.setAttribute('spellcheck', this._autocorrectEnabled ? 'true' : 'false'); // Spellcheck is often bundled with autocorrect
+      
       Object.assign(input.style, {
         width: '100%', border: 'none', outline: 'none', padding: '10px',
         background: this.style.inputBG, 
@@ -713,12 +741,13 @@
         this.inputField.style.color = 'transparent';
       } else {
         this.inputField.style.background = bgLayer;
-        this.inputField.style.backgroundRepeat = ''; this.inputField.style.backgroundSize = '';
-        this.inputField.style.webkitBackgroundClip = ''; this.inputField.style.backgroundClip = '';
-        this.inputField.style.webkitTextFillColor = ''; this.inputField.style.color = textColor;
+        this.inputField.style.backgroundRepeat = 'no-repeat';
+        this.inputField.style.backgroundSize = '100% 100%';
+        this.inputField.style.webkitBackgroundClip = '';
+        this.inputField.style.backgroundClip = '';
+        this.inputField.style.webkitTextFillColor = '';
+        this.inputField.style.color = textColor;
       }
-      if (this.suggestionBox) this.suggestionBox.style.color = textColor;
-      this._updatePlaceholderCSS(this.style.inputPlaceholderColorRaw || this._defaults.inputPlaceholderColorRaw);
     }
 
     _updatePlaceholderCSS (colorRaw) {
@@ -727,11 +756,14 @@
         const placeholderSolid = parsed.color || this._defaults.inputPlaceholderColorRaw;
         const id = 'console-ext-placeholder-style';
         let el = this._placeholderStyleEl || document.getElementById(id);
-        if (!el) { el = document.createElement('style'); el.id = id; document.head.appendChild(el); }
+        if (!el) {
+          el = document.createElement('style');
+          el.id = id;
+          document.head.appendChild(el);
+        }
         if (parsed.isGradient && parsed.gradientCSS && this._supportsBackgroundClipText) {
-          el.textContent =
-            `.console-input::placeholder { color: ${placeholderSolid} !important; opacity: 1 !important; }` +
-            `.console-input::placeholder { background-image: ${parsed.gradientCSS}; -webkit-background-clip: text; background-clip: text; color: transparent !important; }`;
+          el.textContent = `.console-input::placeholder { color: ${placeholderSolid} !important; opacity: 1 !important; }` + 
+                           `.console-input::placeholder { background-image: ${parsed.gradientCSS}; -webkit-background-clip: text; background-clip: text; color: transparent !important; }`;
         } else {
           el.textContent = `.console-input::placeholder { color: ${placeholderSolid} !important; opacity: 1 !important; }`;
         }
@@ -740,7 +772,6 @@
     }
 
     // ---- DOM Element Creation & Styling ----
-
     _createLineElement (entry) {
       if (entry.type === 'spacing') {
         const spacer = document.createElement('div');
@@ -754,73 +785,75 @@
       const container = document.createElement('div');
       container.className = 'console-line';
       container.style.lineHeight = String(this.style.lineSpacing || this._defaults.lineSpacing);
-      
+
       // Inline styles for lines now depend on container setting mostly, but
       // if wrapping is 'scroll', we force lines to fit content so they expand container
       if (this.style.consoleWrapping === 'scroll') {
-          container.style.whiteSpace = 'pre';
-          container.style.wordBreak = 'normal';
+        container.style.whiteSpace = 'pre';
+        container.style.wordBreak = 'normal';
       } else {
-          container.style.whiteSpace = 'pre-wrap';
-          container.style.wordBreak = 'break-word';
+        container.style.whiteSpace = 'pre-wrap';
+        container.style.wordBreak = 'break-word';
       }
-      
+
       // Initial dataset population
       container.dataset.id = String(entry.id);
       container.dataset.ts = String(entry.ts || Date.now());
 
+      // --- TIMESTAMP SPAN ---
       const tsSpan = document.createElement('span');
-      const fmt = (this._timestampFormat === 'off') ? '' : this._formatTimestamp(entry.ts);
-      tsSpan.textContent = fmt ? `[${fmt}] ` : '';
-      tsSpan.style.fontFamily = this.style.fontTimestamp; // Initial global, updated in _applyLineStyle if specific
-      tsSpan.style.display = 'inline';
-      this._applyInlineTextColor(tsSpan, this.style.timestampTextRaw);
+      tsSpan.className = 'console-timestamp';
+      // Timestamp color
+      this._applyInlineTextColor(tsSpan, this.style.timestampTextRaw || this._defaults.timestampTextRaw);
+
+      // We rely on _resizeDynamicSizes to set the correct pixel size
+      const formatted = (this._timestampFormat === 'off') ? '' : this._formatTimestamp(Number(container.dataset.ts));
+      tsSpan.textContent = formatted ? `[${formatted}] ` : '';
       container.appendChild(tsSpan);
 
       if (entry.type === 'image') {
+        // --- IMAGE ENTRY ---
         const img = document.createElement('img');
         img.className = 'console-img';
-        img.src = entry.src;
+        img.src = entry.src || '';
         
-        // --- SCALING LOGIC ---
         const valW = Number(entry.width) || 0;
         const valH = Number(entry.height) || 0;
-        
-        // FIX: Handle 0 properly (explicit 0 means 0, default to 4 if invalid)
-        const rawR = entry.roundness;
-        const roundness = (rawR === '' || rawR === null || rawR === undefined || isNaN(rawR)) ? 4 : Number(rawR);
+        const roundness = Number(entry.roundness) || 4;
 
+        // --- SIZING ---
         if (valW === 0 && valH === 0) {
-            // Both 0 -> Native resolution (auto)
-            img.style.width = 'auto';
-            img.style.height = 'auto';
+          // Default: 100% width, auto height
+          img.style.width = '100%';
+          img.style.height = 'auto';
         } else if (valW === 0) {
-            // Width 0, Height set -> Scale width proportionally
-            img.style.width = 'auto';
-            img.style.height = `${valH}px`;
+          // Width 0, Height set -> Scale width proportionally
+          img.style.height = `${valH}px`;
+          img.style.width = 'auto';
         } else if (valH === 0) {
-            // Height 0, Width set -> Scale height proportionally
-            img.style.width = `${valW}px`;
-            img.style.height = 'auto';
+          // Height 0, Width set -> Scale height proportionally
+          img.style.width = `${valW}px`;
+          img.style.height = 'auto';
         } else {
-            // Both set -> Stretch/Fix to dimensions
-            img.style.width = `${valW}px`;
-            img.style.height = `${valH}px`;
+          // Both set -> Stretch/Fix to dimensions
+          img.style.width = `${valW}px`;
+          img.style.height = `${valH}px`;
         }
         
         // --- ROUNDNESS ---
         img.style.borderRadius = `${Math.max(0, roundness)}px`;
-        
+
         // --- AUTO SCROLL FIX ON LOAD ---
         img.onload = () => {
-             // If auto-scroll is enabled, force scroll to bottom when image loads (height changes)
-             if (this._autoScrollEnabled && this.logArea) {
-                  this._instantScrollToBottom();
-             }
+          // If auto-scroll is enabled, force scroll to bottom when image loads (height changes)
+          if (this._autoScrollEnabled && this.logArea) {
+            this._instantScrollToBottom();
+          }
         };
 
         container.appendChild(img);
       } else {
+        // --- TEXT ENTRY (type=text or anything else defaulting to text) ---
         const msgSpan = document.createElement('span');
         msgSpan.textContent = entry.text;
         msgSpan.style.fontFamily = this.style.fontText; // Initial global
@@ -837,63 +870,54 @@
 
     // New Helper: Applies specific overrides to a DOM element
     _applyLineStyle (el, entry) {
-        if (!el) return;
-        
-        // 1. Alignment
-        // Use custom alignment if present, otherwise global
-        el.style.textAlign = entry.customAlign ? entry.customAlign : this.style.textAlign;
+      if (!el) return;
 
-        // 2. Font Family (Text Span)
-        const msgSpan = el.querySelectorAll('span')[1]; // [0] is ts, [1] is msg
-        if (msgSpan && entry.type === 'text') {
-            msgSpan.style.fontFamily = entry.customFont ? entry.customFont : this.style.fontText;
-        }
+      // 1. Alignment
+      // Use custom alignment if present, otherwise global
+      el.style.textAlign = entry.customAlign ? entry.customAlign : this.style.textAlign;
 
-        // 3. Size Multiplier
-        // We store the specific multiplier in dataset. 
-        // _resizeDynamicSizes will read this on next pass (called immediately after this).
-        if (entry.customSize) {
-            el.dataset.sizeMult = String(entry.customSize);
-        } else {
-            delete el.dataset.sizeMult;
-        }
+      // 2. Font Family (Text Span)
+      const msgSpan = el.querySelectorAll('span')[1]; // [0] is ts, [1] is msg
+      if (msgSpan && entry.type === 'text') {
+        msgSpan.style.fontFamily = entry.customFont ? entry.customFont : this.style.fontText;
+      }
+
+      // 3. Size Multiplier
+      // We store the specific multiplier in dataset.
+      // _resizeDynamicSizes will read this on next pass (called immediately after this).
+      if (entry.customSize) {
+        el.dataset.sizeMult = String(entry.customSize);
+      } else {
+        delete el.dataset.sizeMult;
+      }
     }
-    
+
     // Helper for Input Wrapping vs Scrolling
     _applyWrappingStyle (el, mode) {
-        if (!el) return;
-        if (mode === 'scroll') {
-            el.style.whiteSpace = 'pre';
-            el.style.overflowX = 'auto';
-            el.style.wordBreak = 'normal';
-        } else {
-            // 'wrap'
-            el.style.whiteSpace = 'pre-wrap';
-            el.style.overflowX = 'hidden';
-            el.style.wordBreak = 'break-word';
-        }
-    }
-
-    // FIX: New helper for Console container wrapping
-    _applyConsoleWrappingToContainer (el, mode) {
-        if (!el) return;
-        if (mode === 'scroll') {
-            // Unified X scrolling: parent (el) handles overflow-x
-            el.style.overflowX = 'auto';
-            // Children will need to be forced to not wrap
-        } else {
-            // Wrap: parent hides overflow-x, children wrap
-            el.style.overflowX = 'hidden';
-        }
-    }
-
-    _applyInlineTextColor (el, rawColorArg) {
       if (!el) return;
-      const parsed = this._parseColorArg(rawColorArg);
-      if (parsed.isGradient && parsed.gradientCSS) {
+      if (mode === 'scroll') {
+        el.style.whiteSpace = 'pre';
+        el.style.wordBreak = 'normal';
+      } else { // 'wrap'
+        el.style.whiteSpace = 'pre-wrap';
+        el.style.wordBreak = 'break-word';
+      }
+    }
+
+    _applyConsoleWrappingToContainer (el, mode) {
+      if (!el) return;
+      if (mode === 'scroll') {
+        el.style.overflowX = 'auto'; // Container scrolls horizontally
+      } else { // 'wrap'
+        el.style.overflowX = 'hidden';
+      }
+    }
+
+    _applyInlineTextColor (el, colorRaw) {
+      if (!el) return;
+      const parsed = this._parseColorArg(colorRaw || '#FFFFFF');
+      if (parsed.isGradient && parsed.gradientCSS && this._supportsBackgroundClipText) {
         el.style.backgroundImage = parsed.gradientCSS;
-        el.style.backgroundRepeat = 'no-repeat';
-        el.style.backgroundSize = '100% 100%';
         el.style.webkitBackgroundClip = 'text';
         el.style.backgroundClip = 'text';
         el.style.webkitTextFillColor = 'transparent';
@@ -913,6 +937,7 @@
         if (!this.consoleVisible) return;
         this._createConsole();
       }
+
       let priorAtBottom = false;
       try { priorAtBottom = (this.logArea.scrollTop + this.logArea.clientHeight) >= (this.logArea.scrollHeight - 5); } catch (e) { priorAtBottom = false; }
 
@@ -922,16 +947,18 @@
       if (this._timestampFormat === 'relative' && this._io) {
         // Only observe if it's a regular line (not spacing)
         if (entry.type !== 'spacing') {
-            try { this._io.observe(el); } catch (e) {}
+          try { this._io.observe(el); } catch (e) {}
         }
       }
 
       this._resizeDynamicSizes(); // This will apply the correct pixel size based on dataset.sizeMult
+      
       if (!skipAutoScroll && this._autoScrollEnabled && priorAtBottom) this._instantScrollToBottom();
     }
 
     _restoreConsoleCache () {
       if (!this.logArea) return;
+
       const prevScroll = this.logArea.scrollTop || 0;
       const prevMax = this.logArea.scrollHeight || 0;
       const wasAtBottom = (prevScroll + this.logArea.clientHeight) >= (prevMax - 5);
@@ -941,6 +968,7 @@
         const el = this._createLineElement(entry);
         this.logArea.appendChild(el);
       }
+
       if (this._timestampFormat === 'relative' && this._io) this._observeAllLines();
       this._resizeDynamicSizes();
 
@@ -950,173 +978,228 @@
       } else {
         const newMax = this.logArea.scrollHeight || 0;
         const clamped = Math.min(Math.max(0, prevScroll), Math.max(0, newMax - this.logArea.clientHeight));
-        this.logArea.scrollTop = isFinite(clamped) ? clamped : 0;
-        this._scrollCache = this.logArea.scrollTop;
+        this.logArea.scrollTop = clamped;
+        this._scrollCache = clamped;
       }
     }
 
-    // ---- logging API ----
-    _log (text, colorRaw = '#FFFFFF') {
-      const entry = { id: this._nextId++, type: 'text', text: String(text), colorRaw: String(colorRaw), ts: Date.now() };
+    // ---- logging & message methods ----
+    _log (text, color, type = 'text', entryOverride = {}) {
+      if (!text) return;
+
+      const entry = Object.assign({
+        id: this._nextId++,
+        type: type,
+        ts: Date.now(),
+        text: String(text),
+        colorRaw: String(color || '#FFFFFF')
+      }, entryOverride);
+
       this._consoleCache.push(entry);
       if (this._dotsInterval) this._stopDots();
       this._addLineToDOM(entry);
+
+      // If it's an image, auto-add a 10px spacing below it, which will be maintained if the image is removed
+      if (type === 'image' && (entry.width > 0 || entry.height > 0)) {
+        this._addSpacing(10, true);
+      }
     }
+
     logMessage (args) { this._log(args.TEXT, args.COLOR); }
     
-    // MODIFIED: logImage with Auto Spacing
     logImage (args) {
-        const entry = { id: this._nextId++, type: 'image', src: String(args.SRC), width: args.W, height: args.H, roundness: args.R, ts: Date.now() };
-        this._consoleCache.push(entry);
-        if (this._dotsInterval) this._stopDots();
-        this._addLineToDOM(entry);
-
-        // Auto add slight spacing after image (10px)
-        // isAuto=true, so it won't show in JSON export
-        this._addSpacing(10, true);
+      this._log('', null, 'image', {
+        src: String(args.SRC || ''),
+        width: Number(args.W) || 0,
+        height: Number(args.H) || 0,
+        roundness: Number(args.R) || 4,
+        colorRaw: String('#FFFFFF') // Not used for images, but for structure
+      });
     }
 
-    // Helper: Add or Update Spacing
-    _addSpacing(height, isAuto = false) {
-        const h = Math.max(0, Number(height) || 0);
-        
-        // If the last entry is already spacing, update it instead of adding new one
-        const lastEntry = this._consoleCache[this._consoleCache.length - 1];
-        if (lastEntry && lastEntry.type === 'spacing') {
-            lastEntry.spacingHeight = h;
-            lastEntry.isAutoSpacing = isAuto; // Update source flag
-            // Update DOM if visible
-            if (this.logArea) {
-                const el = this.logArea.querySelector(`[data-id="${lastEntry.id}"]`);
-                if (el) el.style.marginTop = `${h}px`;
-            }
-            return;
-        }
-
-        // Otherwise create new spacing entry
-        if (h === 0) return; // Don't add 0px new spacing
-        const entry = { id: this._nextId++, type: 'spacing', spacingHeight: h, isAutoSpacing: isAuto };
-        this._consoleCache.push(entry);
-        if (this._dotsInterval) this._stopDots();
-        this._addLineToDOM(entry);
-    }
-
-    // -- HELPER: Get actual cache index from visual line index (skipping spacing) --
-    _getRealIndex(visualIndex) {
-        let count = 0;
-        for (let i = 0; i < this._consoleCache.length; i++) {
-            if (this._consoleCache[i].type !== 'spacing') {
-                count++;
-                if (count === visualIndex) return i;
-            }
-        }
-        return -1;
-    }
-
-    // -- Style Line Methods --
-    styleLine (args) {
-        const visibleIndex = Math.floor(Number(args.INDEX) || 1);
-        const idx = this._getRealIndex(visibleIndex);
-
-        if (idx === -1) return;
-
-        const entry = this._consoleCache[idx];
-        entry.customFont = String(args.FONT || '');
-        entry.customSize = Number(args.SIZE) || 1;
-        entry.customAlign = String(args.ALIGN || '').toLowerCase();
-        
-        if (this.logArea) {
-            const el = this.logArea.querySelector(`[data-id="${entry.id}"]`);
-            if (el) {
-                this._applyLineStyle(el, entry);
-                this._resizeDynamicSizes();
-            }
-        }
-    }
-
-    // Reset Line Style
-    resetLineStyle (args) {
-        const visibleIndex = Math.floor(Number(args.INDEX) || 1);
-        const idx = this._getRealIndex(visibleIndex);
-
-        if (idx === -1) return;
-
-        const entry = this._consoleCache[idx];
-        // Remove custom properties
-        delete entry.customFont;
-        delete entry.customSize;
-        delete entry.customAlign;
-
-        if (this.logArea) {
-            const el = this.logArea.querySelector(`[data-id="${entry.id}"]`);
-            if (el) {
-                // Re-apply style (will fallback to defaults now that custom props are gone)
-                this._applyLineStyle(el, entry);
-                this._resizeDynamicSizes();
-            }
-        }
-    }
-
-    clearConsole () { 
-        this._consoleCache = []; 
-        if (this.logArea) this.logArea.innerHTML = ''; 
-        this._scrollCache = 0; 
-        this._disconnectObserverAndLoop(); // Also clear IO
-    }
-
+    // --- Dots animation ---
+    _dotsInterval = null;
     logDots () {
-      if (!this.consoleVisible && !this.logArea) return;
-      if (!this.logArea) this._createConsole();
-      this._stopDots();
-      const el = document.createElement('div');
-      el.className = 'console-line';
-      el.style.color = '#888';
-      el.style.fontFamily = this.style.fontText;
-      el.style.lineHeight = String(this.style.lineSpacing || this._defaults.lineSpacing);
-      el.textContent = '.';
-      this.logArea.appendChild(el);
-      this._dotsElement = el;
-      this._dotsStep = 0;
-      const frames = ['.', '..', '...'];
+      const text = '...';
+      const color = '#FFFFFF';
+      const lastEntry = this._consoleCache[this._consoleCache.length - 1];
+
+      // If the last entry is already the dots animation, just update its timestamp for visibility/relevance
+      if (lastEntry && lastEntry.type === 'dots') {
+        lastEntry.ts = Date.now();
+        if (this.logArea) {
+          const el = this.logArea.querySelector(`[data-id="${lastEntry.id}"]`);
+          if (el) el.dataset.ts = String(lastEntry.ts);
+        }
+      } else {
+        this._log(text, color, 'dots');
+      }
+
+      if (this._dotsInterval) return;
+
       this._dotsInterval = setInterval(() => {
-        this._dotsStep = (this._dotsStep + 1) % frames.length;
-        if (this._dotsElement) this._dotsElement.textContent = frames[this._dotsStep];
-      }, 200);
-      if (this._autoScrollEnabled) this._instantScrollToBottom();
+        // Find the dots entry
+        const dotsEntry = this._consoleCache.find(e => e.type === 'dots');
+        if (!dotsEntry) {
+          this._stopDots();
+          return;
+        }
+
+        const maxDots = 3;
+        let currentDots = (dotsEntry.text.match(/\./g) || []).length;
+        currentDots = (currentDots % maxDots) + 1;
+        
+        dotsEntry.text = '.'.repeat(currentDots);
+        
+        // Update DOM
+        if (this.logArea) {
+          const el = this.logArea.querySelector(`[data-id="${dotsEntry.id}"]`);
+          if (el) {
+            const msgSpan = el.querySelectorAll('span')[1];
+            if (msgSpan) msgSpan.textContent = dotsEntry.text;
+          }
+        }
+      }, 500);
     }
-    _stopDots () { if (this._dotsInterval) clearInterval(this._dotsInterval); this._dotsInterval = null; if (this._dotsElement) { this._dotsElement.remove(); this._dotsElement = null; } }
+    _stopDots () {
+      if (this._dotsInterval) clearInterval(this._dotsInterval);
+      this._dotsInterval = null;
 
+      // Remove the dots entry from cache and DOM
+      const idx = this._consoleCache.findIndex(e => e.type === 'dots');
+      if (idx !== -1) {
+        this.removeLine({ INDEX: this._getVisualIndex(idx) });
+      }
+    }
+
+    // --- Line Management ---
     removeLine (args) {
-      const visibleIndex = Math.max(1, Math.floor(Number(args.INDEX) || 1));
+      const visibleIndex = Math.floor(Number(args.INDEX) || 1);
       const idx = this._getRealIndex(visibleIndex);
-
       if (idx === -1) return;
 
       if (this.logArea) {
         const prevScroll = this.logArea.scrollTop || 0;
         const entry = this._consoleCache[idx];
         const el = this.logArea.querySelector(`[data-id="${entry.id}"]`);
+
         if (el) {
           if (this._io) try { this._io.unobserve(el); } catch (e) {}
           this._visibleSet.delete(el);
           el.remove();
         }
+        
+        // Remove associated auto-spacing if it exists immediately after this line
+        if (this._consoleCache[idx+1] && this._consoleCache[idx+1].type === 'spacing' && this._consoleCache[idx+1].isAutoSpacing) {
+           const spacingEntry = this._consoleCache[idx+1];
+           const spacingEl = this.logArea.querySelector(`[data-id="${spacingEntry.id}"]`);
+           if (spacingEl) spacingEl.remove();
+           this._consoleCache.splice(idx+1, 1);
+        }
+        
         this._consoleCache.splice(idx, 1);
+        
         if (this.logArea.scrollHeight) this.logArea.scrollTop = prevScroll; // simplistic maintain
       } else {
+        // Remove associated auto-spacing if it exists immediately after this line
+        if (this._consoleCache[idx+1] && this._consoleCache[idx+1].type === 'spacing' && this._consoleCache[idx+1].isAutoSpacing) {
+            this._consoleCache.splice(idx+1, 1);
+        }
         this._consoleCache.splice(idx, 1);
       }
     }
 
+    // Used by removeLine to find the correct entry
+    _getVisualIndex(cacheIndex) {
+        let count = 0;
+        for (let i = 0; i <= cacheIndex; i++) {
+            if (this._consoleCache[i].type !== 'spacing') {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    _addSpacing (h, isAuto = false) {
+      // Check if the last item is already an auto-spacing. If so, just update its height.
+      const lastEntry = this._consoleCache[this._consoleCache.length - 1];
+      if (lastEntry && lastEntry.type === 'spacing' && lastEntry.isAutoSpacing) {
+        lastEntry.spacingHeight = h; // Update source flag
+        // Update DOM if visible
+        if (this.logArea) {
+            const el = this.logArea.querySelector(`[data-id="${lastEntry.id}"]`);
+            if (el) el.style.marginTop = `${h}px`;
+        }
+        return;
+      }
+      // Otherwise create new spacing entry
+      if (h === 0) return; // Don't add 0px new spacing
+      const entry = { id: this._nextId++, type: 'spacing', spacingHeight: h, isAutoSpacing: isAuto };
+      this._consoleCache.push(entry);
+      if (this._dotsInterval) this._stopDots();
+      this._addLineToDOM(entry);
+    }
+
+    // -- HELPER: Get actual cache index from visual line index (skipping spacing) --
+    _getRealIndex(visualIndex) {
+      let count = 0;
+      for (let i = 0; i < this._consoleCache.length; i++) {
+        if (this._consoleCache[i].type !== 'spacing') {
+          count++;
+          if (count === visualIndex) return i;
+        }
+      }
+      return -1;
+    }
+
+    // -- Style Line Methods --
+    styleLine (args) {
+      const visibleIndex = Math.floor(Number(args.INDEX) || 1);
+      const idx = this._getRealIndex(visibleIndex);
+      if (idx === -1) return;
+
+      const entry = this._consoleCache[idx];
+      entry.customFont = String(args.FONT || '');
+      entry.customSize = Number(args.SIZE) || 1;
+      entry.customAlign = String(args.ALIGN || '').toLowerCase();
+
+      if (this.logArea) {
+        const el = this.logArea.querySelector(`[data-id="${entry.id}"]`);
+        if (el) {
+          this._applyLineStyle(el, entry);
+          this._resizeDynamicSizes();
+        }
+      }
+    }
+
+    // Reset Line Style
+    resetLineStyle (args) {
+      const visibleIndex = Math.floor(Number(args.INDEX) || 1);
+      const idx = this._getRealIndex(visibleIndex);
+      if (idx === -1) return;
+
+      const entry = this._consoleCache[idx];
+      // Remove custom properties
+      delete entry.customFont;
+      delete entry.customSize;
+      delete entry.customAlign;
+
+      if (this.logArea) {
+        const el = this.logArea.querySelector(`[data-id="${entry.id}"]`);
+        if (el) {
+          this._applyLineStyle(el, entry);
+          this._resizeDynamicSizes();
+        }
+      }
+    }
+
     // ---- persistence ----
-    getConsoleAsArray () { 
-      try { 
+    getConsoleAsArray () {
+      try {
         // Filter out auto-spacing entries so they don't persist in save files
         const savable = this._consoleCache.filter(e => !e.isAutoSpacing);
-        return JSON.stringify(savable); 
-      } catch (e) { 
-        return '[]'; 
-      } 
+        return JSON.stringify(savable);
+      } catch (e) { return '[]'; }
     }
 
     setConsoleFromArray (args) {
@@ -1126,76 +1209,82 @@
 
         this._consoleCache = [];
         this._nextId = 1;
-
+        
         for (const e of arr) {
-            const base = {
-                id: this._nextId++, // Generate fresh IDs
-                type: e.type || 'text',
-                ts: e.ts ? Number(e.ts) : Date.now(),
-            };
+          const base = {
+            id: this._nextId++, // Generate fresh IDs
+            type: e.type || 'text',
+            ts: e.ts ? Number(e.ts) : Date.now(),
+          };
 
-            if (base.type === 'spacing') {
-                this._consoleCache.push(Object.assign(base, {
-                    spacingHeight: Number(e.spacingHeight) || 0,
-                    isAutoSpacing: false // Loaded manually, so not auto
-                }));
-            } else {
-                // Text or Image
-                const entry = Object.assign(base, {
-                    text: String(e.text || ''),
-                    src: e.src, 
-                    width: e.width, 
-                    height: e.height,
-                    roundness: e.roundness,
-                    colorRaw: String(e.colorRaw || '#FFFFFF'),
-                    customFont: e.customFont,
-                    customSize: e.customSize,
-                    customAlign: e.customAlign
-                });
-                this._consoleCache.push(entry);
+          if (base.type === 'spacing') {
+            this._consoleCache.push(Object.assign(base, {
+              spacingHeight: Number(e.spacingHeight) || 0,
+              isAutoSpacing: false // Loaded manually, so not auto
+            }));
+          } else {
+            // Text or Image
+            const entry = Object.assign(base, {
+              text: String(e.text || ''),
+              src: e.src,
+              width: e.width,
+              height: e.height,
+              roundness: e.roundness,
+              colorRaw: String(e.colorRaw || '#FFFFFF'),
+              customFont: e.customFont,
+              customSize: e.customSize,
+              customAlign: e.customAlign
+            });
+            this._consoleCache.push(entry);
 
-                // If it was an image, re-inject the auto spacing
-                if (entry.type === 'image') {
-                    this._consoleCache.push({
-                        id: this._nextId++,
-                        type: 'spacing',
-                        spacingHeight: 10,
-                        isAutoSpacing: true
-                    });
-                }
+            // If it was an image, re-inject the auto spacing
+            if (entry.type === 'image' && (entry.width > 0 || entry.height > 0)) {
+                this._consoleCache.push({ id: this._nextId++, type: 'spacing', spacingHeight: 10, isAutoSpacing: true });
             }
+          }
         }
+        
+        // Stop dots if they were active
+        if (this._dotsInterval) this._stopDots();
 
-        if (this.logArea) this._restoreConsoleCache();
-      } catch (e) {
-          console.error('Failed to load console from JSON:', e);
-      }
+        this._restoreConsoleCache();
+
+      } catch (e) {}
     }
 
     getConsoleLineCount () { 
-        // Only count visible lines (text, image, dots)
-        return this._consoleCache.filter(e => e.type !== 'spacing').length; 
+      // Count only non-spacing entries
+      return this._consoleCache.filter(e => e.type !== 'spacing').length;
     }
-    isConsoleShown () { return !!this.consoleVisible; }
-    setSelectable (args) { this.textSelectable = !!args.SELECTABLE; if (this.consoleOverlay) this.consoleOverlay.style.userSelect = this.textSelectable ? 'text' : 'none'; }
 
-    // ---- timestamp format + IntersectionObserver logic ----
+    isConsoleShown () { return !!this.consoleVisible; }
+    
+    // Allow the text in the console to be selectable (or not)
+    setSelectable (args) {
+        this.textSelectable = !!args.ENABLED;
+        if (this.consoleOverlay) {
+            this.consoleOverlay.style.userSelect = this.textSelectable ? 'text' : 'none';
+        }
+    }
+
+    // ---- timestamp management ----
     setTimestampFormat (args) {
-      const fmt = String(args.FORMAT || 'off');
-      if (!['off','24h','12h','relative'].includes(fmt)) return;
-      if (this._timestampFormat === 'relative' && fmt !== 'relative') this._disconnectObserverAndLoop();
-      this._timestampFormat = fmt;
-      if (this.logArea) this._refreshTimestamps();
-      if (fmt === 'relative') { this._setupObserverForRelative(); this._updateVisibleLinesNow(); }
+      const format = String(args.FORMAT || 'off').toLowerCase();
+      const valid = ['off', '24h', '12h', 'relative'];
+      this._timestampFormat = valid.includes(format) ? format : 'off';
+      
+      this._disconnectObserverAndLoop();
+
+      if (this._timestampFormat === 'relative') {
+        this._setupObserverForRelative();
+      } 
+      this._refreshTimestamps();
+      this._resizeDynamicSizes(); // Recalculate size since timestamps might change height
     }
 
     _formatTimestamp (ms) {
-      if (!ms || this._timestampFormat === 'off') return '';
-      const d = new Date(Number(ms));
       if (this._timestampFormat === 'relative') {
-        const diff = Date.now() - d.getTime();
-        if (diff < 0) return 'in future';
-        const s = Math.floor(diff / 1000);
+        const s = Math.floor((Date.now() - ms) / 1000);
         if (s < 5) return 'just now';
         if (s < 60) return `${s}s ago`;
         const m = Math.floor(s / 60);
@@ -1206,12 +1295,14 @@
         if (days === 1) return '1 day ago';
         return `${days} days ago`;
       }
+      const d = new Date(ms);
       const h = d.getHours(), min = d.getMinutes(), s = d.getSeconds();
       if (this._timestampFormat === '12h') {
         const hh = ((h + 11) % 12) + 1;
         const ampm = h < 12 ? 'AM' : 'PM';
         return `${hh}:${String(min).padStart(2,'0')}:${String(s).padStart(2,'0')} ${ampm}`;
       }
+      // 24h format
       return `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
     }
 
@@ -1226,52 +1317,75 @@
       }
     }
 
+    _updateTimestampForElement (el) {
+        if (this._timestampFormat !== 'relative' || !el || !el.dataset.ts) return;
+        const ts = Number(el.dataset.ts);
+        const formatted = this._formatTimestamp(ts);
+        const spans = el.querySelectorAll('span');
+        if (spans[0]) spans[0].textContent = formatted ? `[${formatted}] ` : '';
+    }
+
+    _observeAllLines () {
+      if (!this._io || !this.logArea) return;
+      for (const c of Array.from(this.logArea.children)) {
+        if (c.classList.contains('console-spacing')) continue;
+        try { this._io.observe(c); } catch (e) {}
+      }
+    }
+
     _setupObserverForRelative () {
       this._disconnectObserverAndLoop();
       if (!this.logArea) return;
+
       const callback = (entries) => {
         for (const entry of entries) {
           const el = entry.target;
-          if (entry.isIntersecting) { this._visibleSet.add(el); this._updateTimestampForElement(el); } 
-          else { this._visibleSet.delete(el); }
+          if (entry.isIntersecting) {
+            this._visibleSet.add(el);
+            this._updateTimestampForElement(el);
+          } else {
+            this._visibleSet.delete(el);
+          }
         }
       };
+
       try {
         const options = Object.assign({}, this._ioOptions, { root: this.logArea });
         this._io = new IntersectionObserver(callback, options);
         this._observeAllLines();
+        this._startVisibleUpdateLoop();
       } catch (e) {
         this._io = null;
         if (this.logArea) this.logArea.addEventListener('scroll', () => this._updateVisibleLinesNow(), { passive: true });
+        this._startVisibleUpdateLoop();
       }
-      this._startVisibleUpdateLoop();
     }
 
-    _observeAllLines () { 
-        if (!this.logArea) return; 
-        if (this._io) {
-            for (const c of Array.from(this.logArea.children)) { 
-                // Only observe if it's a regular line (not spacing)
-                if (c.classList.contains('console-line')) {
-                    try { this._io.observe(c); } catch (e) {} 
-                }
-            } 
+    _disconnectObserverAndLoop () {
+      if (this._io) { try { this._io.disconnect(); } catch (e) {} }
+      this._io = null;
+      this._stopVisibleUpdateLoop();
+      this._visibleSet.clear();
+    }
+
+    _startVisibleUpdateLoop () {
+      if (this._visibleUpdateInterval) return;
+      this._visibleUpdateInterval = setInterval(() => {
+        if (this._timestampFormat === 'relative') {
+          for (const el of this._visibleSet) this._updateTimestampForElement(el);
         } else {
-            this._updateVisibleLinesNow();
+          this._stopVisibleUpdateLoop();
         }
+      }, this._visibleIntervalMs);
     }
-    _disconnectObserverAndLoop () { try { if (this._io) { this._io.disconnect(); this._io = null; } } catch (e) {} this._stopVisibleUpdateLoop(); this._visibleSet.clear(); }
-    _updateTimestampForElement (el) {
-      if (!el) return;
-      try {
-        const ts = Number(el.dataset.ts || 0);
-        const formatted = (this._timestampFormat === 'off') ? '' : this._formatTimestamp(ts);
-        const spans = el.querySelectorAll('span');
-        if (spans[0]) spans[0].textContent = formatted ? `[${formatted}] ` : '';
-      } catch (e) {}
+
+    _stopVisibleUpdateLoop () {
+      if (this._visibleUpdateInterval) {
+        clearInterval(this._visibleUpdateInterval);
+        this._visibleUpdateInterval = null;
+      }
     }
-    _startVisibleUpdateLoop () { if (this._visibleUpdateInterval) return; this._visibleUpdateInterval = setInterval(() => { try { const snapshot = Array.from(this._visibleSet); for (const el of snapshot) { if (el && el.isConnected) this._updateTimestampForElement(el); else this._visibleSet.delete(el); } } catch (e) {} }, Math.max(10, Number(this._visibleIntervalMs) || 200)); }
-    _stopVisibleUpdateLoop () { if (this._visibleUpdateInterval) { clearInterval(this._visibleUpdateInterval); this._visibleUpdateInterval = null; } }
+
     _updateVisibleLinesNow () {
       if (!this.logArea) return;
       const areaRect = this.logArea.getBoundingClientRect();
@@ -1280,8 +1394,16 @@
         try {
           const r = c.getBoundingClientRect();
           const intersects = !(r.bottom < areaRect.top || r.top > areaRect.bottom);
-          if (intersects) { if (this._io) { this._updateTimestampForElement(c); } else { this._visibleSet.add(c); this._updateTimestampForElement(c); } } 
-          else { if (!this._io) this._visibleSet.delete(c); }
+          if (intersects) {
+            if (this._io) {
+              this._updateTimestampForElement(c);
+            } else {
+              this._visibleSet.add(c);
+              this._updateTimestampForElement(c);
+            }
+          } else {
+            if (!this._io) this._visibleSet.delete(c);
+          }
         } catch (e) {}
       }
     }
@@ -1320,33 +1442,39 @@
 
     setFont (args) {
       const part = String(args.PART || 'text').toLowerCase();
-      const f = String(args.FONT || '').trim();
-      if (!f) return;
-      if (part === 'text') this.style.fontText = f;
-      else if (part === 'timestamp') this.style.fontTimestamp = f;
-      else if (part === 'input') this.style.fontInput = f;
+      const font = String(args.FONT || 'Sans Serif');
+      
+      if (part === 'text') this.style.fontText = font;
+      else if (part === 'timestamp') this.style.fontTimestamp = font;
+      else if (part === 'input') this.style.fontInput = font;
 
       if (this.logArea) {
         for (const ch of Array.from(this.logArea.children)) {
           if (ch.classList.contains('console-spacing')) continue;
-          const spans = ch.querySelectorAll('span');
-          if (spans.length === 0) continue;
-          if (part === 'timestamp' && spans[0]) spans[0].style.fontFamily = this.style.fontTimestamp;
-          // Only update text span if no custom override exists for this line
+          const tsSpan = ch.querySelectorAll('span')[0];
+          const msgSpan = ch.querySelectorAll('span')[1];
           const entry = this._consoleCache.find(e => String(e.id) === ch.dataset.id);
-          if (part === 'text' && spans[1] && (!entry || !entry.customFont)) spans[1].style.fontFamily = this.style.fontText;
+          
+          if (part === 'timestamp' && tsSpan) tsSpan.style.fontFamily = this.style.fontTimestamp;
+          if (part === 'text' && msgSpan) {
+            // Only update if no custom font is applied
+            if (!entry || !entry.customFont) msgSpan.style.fontFamily = this.style.fontText;
+          }
         }
       }
+
       if (this.inputField && part === 'input') this.inputField.style.fontFamily = this.style.fontInput;
+      if (this.suggestionBox && part === 'input') this.suggestionBox.style.fontFamily = this.style.fontInput;
     }
 
     setTextSizeMultiplier (args) {
       const part = String(args.PART || 'text').toLowerCase();
-      let m = Number(args.MULTIPLIER);
-      if (!isFinite(m) || m <= 0) m = 1;
+      const m = Number(args.MULTIPLIER) || 1;
+      
       if (part === 'text') this.style.sizeText = Math.max(0.1, m);
       else if (part === 'timestamp') this.style.sizeTimestamp = Math.max(0.1, m);
       else if (part === 'input') this.style.sizeInput = Math.max(0.1, m);
+
       this._resizeDynamicSizes();
     }
 
@@ -1355,16 +1483,19 @@
       const a = String(args.ALIGN || 'left').toLowerCase();
       const valid = ['left', 'center', 'right'];
       const alignment = valid.includes(a) ? a : 'left';
+
       if (part === 'text') this.style.textAlign = alignment;
       else if (part === 'input') this.style.inputAlign = alignment;
 
       if (this.logArea && part === 'text') {
         for (const ch of Array.from(this.logArea.children)) {
-            if (ch.classList.contains('console-spacing')) continue;
-            const entry = this._consoleCache.find(e => String(e.id) === ch.dataset.id);
-            if (!entry || !entry.customAlign) ch.style.textAlign = this.style.textAlign;
+          if (ch.classList.contains('console-spacing')) continue;
+          const entry = this._consoleCache.find(e => String(e.id) === ch.dataset.id);
+          // Only update if no custom alignment is applied
+          if (!entry || !entry.customAlign) ch.style.textAlign = this.style.textAlign;
         }
       }
+
       if (this.inputField && part === 'input') this.inputField.style.textAlign = this.style.inputAlign;
     }
 
@@ -1380,122 +1511,330 @@
     }
 
     setInputMaxHeight (args) {
-        // Enforce a sensible minimum (10%) to prevent input from disappearing
-        this.style.maxInputHeightPct = Math.max(10, Math.min(100, Number(args.PERCENT) || 40));
-        this._updateInputHeight();
+      // Enforce a sensible minimum (10%) to prevent input from disappearing
+      this.style.maxInputHeightPct = Math.max(10, Math.min(100, Number(args.PERCENT) || 40));
+      this._updateInputHeight();
     }
-    
+
     // NEW BLOCK: Set Text Wrapping
     setTextWrapping (args) {
-        const part = String(args.PART || 'console').toLowerCase();
-        const mode = String(args.MODE || 'wrap').toLowerCase() === 'scroll' ? 'scroll' : 'wrap';
+      const part = String(args.PART || 'console').toLowerCase();
+      const mode = String(args.MODE || 'wrap').toLowerCase() === 'scroll' ? 'scroll' : 'wrap';
 
-        if (part === 'console') {
-            this.style.consoleWrapping = mode;
-            if (this.logArea) {
-                // FIX: Apply wrapping to container for unified X scroll
-                this._applyConsoleWrappingToContainer(this.logArea, mode);
-                for (const line of Array.from(this.logArea.children)) {
-                    if (line.classList.contains('console-line')) {
-                        // Lines must be 'pre' to overflow horizontally
-                        if (mode === 'scroll') {
-                            line.style.whiteSpace = 'pre';
-                            line.style.wordBreak = 'normal';
-                        } else {
-                            line.style.whiteSpace = 'pre-wrap';
-                            line.style.wordBreak = 'break-word';
-                        }
-                    }
-                }
+      if (part === 'console') {
+        this.style.consoleWrapping = mode;
+        if (this.logArea) {
+          // FIX: Apply wrapping to container for unified X scroll
+          this._applyConsoleWrappingToContainer(this.logArea, mode); 
+          for (const line of Array.from(this.logArea.children)) {
+            if (line.classList.contains('console-line')) {
+              // Lines must be 'pre' to overflow horizontally
+              if (mode === 'scroll') {
+                line.style.whiteSpace = 'pre';
+                line.style.wordBreak = 'normal';
+              } else {
+                line.style.whiteSpace = 'pre-wrap';
+                line.style.wordBreak = 'break-word';
+              }
             }
-        } else if (part === 'input') {
-            this.style.inputWrapping = mode;
-            if (this.inputField) {
-                this._applyWrappingStyle(this.inputField, mode);
-            }
+          }
         }
+      } else if (part === 'input') {
+        this.style.inputWrapping = mode;
+        if (this.inputField) {
+          this._applyWrappingStyle(this.inputField, mode);
+          this._updateInputHeight(); // Recalculate height based on new wrapping
+        }
+      }
     }
 
     resetStyling () {
       this.style = Object.assign({}, this._defaults);
-      this.lineSpacing = this._defaults.lineSpacing;
-      if (this.consoleOverlay) this.consoleOverlay.style.background = this.style.consoleBG;
-      if (this.inputField) {
-        this._applyInputBackground(this.style.inputBG);
-        this.inputField.placeholder = this.style.inputPlaceholder;
-        this.inputField.style.fontFamily = this.style.fontInput;
-        this.inputField.style.textAlign = this.style.inputAlign;
-        this._applyInputTextColor(this.style.inputTextRaw);
-        this._updatePlaceholderCSS(this.style.inputPlaceholderColorRaw || this._defaults.inputPlaceholderColorRaw);
-        this._applyWrappingStyle(this.inputField, this.style.inputWrapping);
-        this._updateInputHeight();
-        void this.inputField.offsetHeight;
-      }
-      if (this.suggestionBox) {
-          this.suggestionBox.style.background = this.style.inputBG;
-          this.suggestionBox.style.color = this._firstColorFromRaw(this.style.inputTextRaw);
-      }
-      if (this.logArea) {
-          // Re-apply console wrapping global preference
-          this._applyConsoleWrappingToContainer(this.logArea, this.style.consoleWrapping);
-           for (const line of Array.from(this.logArea.children)) {
-               if (line.classList.contains('console-line')) {
-                   // Lines
-                    if (this.style.consoleWrapping === 'scroll') {
-                        line.style.whiteSpace = 'pre';
-                        line.style.wordBreak = 'normal';
-                    } else {
-                        line.style.whiteSpace = 'pre-wrap';
-                        line.style.wordBreak = 'break-word';
-                    }
-               }
-           }
-          this._restoreConsoleCache();
-      }
+      this._disconnectObserverAndLoop(); // needed in case relative mode was active
+      this._timestampFormat = 'off';
+      this._refreshTimestamps();
+      this.setLineSpacing({ SPACING: this.style.lineSpacing });
+      this.setInputPlaceholder({ TEXT: this.style.inputPlaceholder });
+      this.setInputMaxHeight({ PERCENT: this.style.maxInputHeightPct });
+      this.setTextWrapping({ PART: 'console', MODE: this.style.consoleWrapping });
+      this.setTextWrapping({ PART: 'input', MODE: this.style.inputWrapping });
+      this._applyInputBackground(this.style.inputBG);
+      this._applyInputTextColor(this.style.inputTextRaw);
+      this.setColorPicker({ PART: 'console background', COLOR: this.style.consoleBG });
+      this.setColorPicker({ PART: 'input placeholder', COLOR: this.style.inputPlaceholderColorRaw });
+      
+      this._autocorrectEnabled = false; // Reset autocorrect
+      this.setAutocorrect({ ENABLED: false });
+
+      this._resizeDynamicSizes();
     }
     
-    // ---- scroll ----
-    setAutoScroll (args) { this._autoScrollEnabled = !!args.ENABLED; }
-    isAutoScroll () { return !!this._autoScrollEnabled; }
-    setConsoleScrollTo (args) {
-      const y = Number(args.Y || 0);
-      if (this.logArea) {
-        const max = Math.max(0, this.logArea.scrollHeight - this.logArea.clientHeight);
-        this.logArea.scrollTop = Math.min(max, Math.max(0, y));
-        this._scrollCache = this.logArea.scrollTop;
-      } else { this._scrollCache = Math.max(0, y); }
+    // ---- console management ----
+    toggleConsole (args) {
+      const action = String(args.ACTION || 'toggle').toLowerCase();
+      if (action === 'show') this.showConsole();
+      else if (action === 'hide') this.hideConsole();
+      else this.consoleVisible ? this.hideConsole() : this.showConsole();
     }
-    consoleMaxScroll () { return this.logArea ? Math.max(0, this.logArea.scrollHeight - this.logArea.clientHeight) : (this._scrollCache || 0); }
-    consoleCurrentScroll () { return this.logArea ? this.logArea.scrollTop : (this._scrollCache || 0); }
-    _applyCachedScroll () { if (!this.logArea) return; const max = Math.max(0, this.logArea.scrollHeight - this.logArea.clientHeight); this.logArea.scrollTop = Math.min(max, Math.max(0, this._scrollCache || 0)); }
-    _instantScrollToBottom () {
-      if (!this.logArea) return;
-      const hadObserver = !!this._observer; if (hadObserver) try { this._observer.disconnect(); } catch (e) {}
-      const hadRecovery = !!this._recoveryInterval; if (hadRecovery) try { clearInterval(this._recoveryInterval); } catch (e) {}
-      const prevBehavior = this.logArea.style.scrollBehavior || '';
-      const prevOverflow = this.logArea.style.overflowY || '';
-      this.logArea.style.scrollBehavior = 'auto'; this.logArea.style.overflowY = 'hidden'; void this.logArea.offsetHeight;
-      try { this.logArea.scrollTop = this.logArea.scrollHeight; this._scrollCache = this.logArea.scrollTop; } catch (e) {}
-      this.logArea.style.overflowY = prevOverflow; this.logArea.style.scrollBehavior = prevBehavior;
-      if (hadObserver) try { this._observer.observe(this.stage); } catch (e) {}
-      if (hadRecovery) this._startRecovery();
+
+    showConsole () {
+      if (!this.consoleVisible) {
+        this.consoleVisible = true;
+        this._createConsole();
+        this._restoreConsoleCache(); // Ensure contents are in the DOM
+        if (this.inputVisible) { // If input is already showing, ensure it's re-created over console
+            this.hideInput();
+            this.showInput();
+        }
+        this._resizeDynamicSizes();
+        if (this.logArea) this.logArea.scrollTop = this.logArea.scrollHeight; // Scroll to bottom on show
+      }
     }
-    // ---- toggles ----
-    toggleConsole (args) { const act = String(args.ACTION || 'toggle').toLowerCase(); if (act === 'show') this.showConsole(); else if (act === 'hide') this.hideConsole(); else this.consoleVisible ? this.hideConsole() : this.showConsole(); }
-    showConsole () { this.consoleVisible = true; this._ensureUI(); if (this.consoleOverlay) this.consoleOverlay.style.display = 'flex'; if (this.logArea) { this._restoreConsoleCache(); this._applyCachedScroll(); } this._resizeDynamicSizes(); if (this._timestampFormat === 'relative') this._setupObserverForRelative(); }
-    hideConsole () { if (this.consoleOverlay) this.consoleOverlay.style.display = 'none'; this.consoleVisible = false; }
-    toggleInput (args) { const act = String(args.ACTION || 'toggle').toLowerCase(); let priorAtBottom = false; try { priorAtBottom = this.logArea ? ((this.logArea.scrollTop + this.logArea.clientHeight) >= (this.logArea.scrollHeight - 5)) : true; } catch (e) { priorAtBottom = false; } if (act === 'show') this.showInput(priorAtBottom); else if (act === 'hide') this.hideInput(priorAtBottom); else { if (this.inputVisible) this.hideInput(priorAtBottom); else this.showInput(priorAtBottom); } }
-    showInput (priorAtBottom = false) { this.inputVisible = true; this._ensureUI(); if (!this.inputOverlay) this._createInput(); if (this.inputOverlay) this.inputOverlay.style.display = 'block'; this._resizeDynamicSizes(); if (this.logArea && priorAtBottom) this._instantScrollToBottom(); }
-    hideInput (priorAtBottom = false) { try { priorAtBottom = (typeof priorAtBottom === 'boolean') ? priorAtBottom : (this.logArea ? ((this.logArea.scrollTop + this.logArea.clientHeight) >= (this.logArea.scrollHeight - 5)) : false); } catch (e) { priorAtBottom = false; } if (this.inputOverlay) this.inputOverlay.style.display = 'none'; this.inputVisible = false; this._hideSuggestions(); if (this.logArea && priorAtBottom) this._instantScrollToBottom(); }
-    setInputText (args) { const v = String(args.DATA || ''); this._inputCache = v; if (this.inputField) this.inputField.value = v; this._updateInputHeight(); }
-    runInput (args) { this._dispatchInput(String(args.TEXT || ''), false); }
-    clearInput () { this._inputCache = ''; if (this.inputField) this.inputField.value = ''; this._updateInputHeight(); }
-    setLogInput (args) { this.logInputEnabled = !!args.ENABLED; }
+
+    hideConsole () {
+      if (this.consoleOverlay) {
+        try { this.consoleOverlay.remove(); } catch (e) {}
+        this.consoleOverlay = null;
+        this.logArea = null;
+      }
+      this.consoleVisible = false;
+      this.hideInput();
+      this._disconnectObserverAndLoop();
+    }
+
+    clearConsole () {
+      if (this._dotsInterval) this._stopDots();
+      this._consoleCache = [];
+      this._nextId = 1;
+      this._scrollCache = 0; // Clear scroll cache
+      if (this.logArea) this.logArea.innerHTML = '';
+      this._visibleSet.clear();
+    }
+
+    // ---- input management ----
+    toggleInput (args) {
+      const action = String(args.ACTION || 'toggle').toLowerCase();
+      if (action === 'show') this.showInput();
+      else if (action === 'hide') this.hideInput();
+      else this.inputVisible ? this.hideInput() : this.showInput();
+    }
+
+    showInput () {
+      if (!this.inputVisible) {
+        if (!this.consoleVisible) this.showConsole(); // Must have console to show input
+        this.inputVisible = true;
+        this._createInput();
+        if (this.inputField) {
+            this.inputField.value = this._inputCache;
+            this.inputField.focus(); // Focus on show
+            this._updateInputHeight();
+        }
+        if (this.consoleOverlay) { // Adjust console padding
+            const inputHt = this.inputField ? (this.inputField.offsetHeight || (this._computedInputPx + 36)) : 0;
+            this.consoleOverlay.style.paddingBottom = `${inputHt}px`;
+        }
+      }
+    }
+
+    hideInput () {
+      let priorAtBottom = false;
+      try { priorAtBottom = this.logArea && (this.logArea.scrollTop + this.logArea.clientHeight) >= (this.logArea.scrollHeight - 5); } catch (e) { priorAtBottom = false; }
+      
+      if (this.inputField) this._inputCache = this.inputField.value; // Cache current input
+      if (this.inputOverlay) this.inputOverlay.style.display = 'none';
+      
+      this.inputVisible = false;
+      this._hideSuggestions();
+      
+      if (this.consoleOverlay) this.consoleOverlay.style.paddingBottom = ''; // Remove padding
+      
+      // If we were at the bottom and remove the input, scroll to the new bottom
+      if (this.logArea && priorAtBottom) this._instantScrollToBottom(); 
+    }
+
+    setInputText (args) {
+      const v = String(args.DATA || '');
+      this._inputCache = v;
+      if (this.inputField) this.inputField.value = v;
+      this._updateInputHeight();
+    }
+
+    runInput (args) {
+      this._dispatchInput(String(args.TEXT || ''), false);
+    }
+
+    clearInput () {
+      this._inputCache = '';
+      if (this.inputField) this.inputField.value = '';
+      this._updateInputHeight();
+    }
+
+    setLogInput (args) {
+      this.logInputEnabled = !!args.ENABLED;
+    }
+
     getLastInput () { return this.lastInput || ''; }
     getCurrentInput () { return (this.inputField ? this.inputField.value : this._inputCache) || ''; }
     isInputShown () { return !!this.inputVisible; }
-    _dispatchInput (text, manual) { const txt = String(text || ''); this.lastInput = txt; if (this.logInputEnabled && txt.trim()) this._log('> ' + txt.trim(), '#FFFFFF'); this._inputEventId = (this._inputEventId || 0) + 1; try { if (typeof vm !== 'undefined' && vm && vm.runtime && typeof vm.runtime.startHats === 'function') vm.runtime.startHats(`${this.id}_whenInput`); } catch (e) {} }
-    whenInput (args, util) { try { const tid = util?.target?.id ?? 'global'; if (!this._lastSeenEventIdByTarget) this._lastSeenEventIdByTarget = new Map(); const lastSeen = this._lastSeenEventIdByTarget.get(tid) || 0; if ((this._inputEventId || 0) > lastSeen) { this._lastSeenEventIdByTarget.set(tid, this._inputEventId); return true; } return false; } catch (e) { return false; } }
+
+    // NEW BLOCK: Autocorrect toggle
+    setAutocorrect (args) {
+        const enabled = !!args.ENABLED;
+        this._autocorrectEnabled = enabled;
+        if (this.inputField) {
+            this.inputField.setAttribute('autocorrect', enabled ? 'on' : 'off');
+            this.inputField.setAttribute('spellcheck', enabled ? 'true' : 'false');
+        }
+    }
+
+    // NEW BLOCK: Selection position reporter
+    getSelectionPosition (args) {
+        const source = String(args.SOURCE || 'current').toLowerCase();
+        const position = String(args.POSITION || 'start').toLowerCase();
+
+        if (source === 'last') {
+            // Selection properties (selectionStart/End) are only relevant to the *live* input DOM element.
+            // For the historically saved 'last input' string, we return 0 as the concept does not apply.
+            return 0;
+        }
+
+        // Source is 'current'
+        if (this.inputField) {
+            if (position === 'start') {
+                return this.inputField.selectionStart || 0;
+            } else if (position === 'end') {
+                return this.inputField.selectionEnd || 0;
+            }
+        }
+        return 0;
+    }
+
+    _dispatchInput (text, manual) {
+      const txt = String(text || '');
+      this.lastInput = txt;
+      if (this.logInputEnabled && txt.trim()) this._log('> ' + txt.trim(), '#FFFFFF');
+      
+      this._inputEventId = (this._inputEventId || 0) + 1;
+      try {
+        if (typeof vm !== 'undefined' && vm && vm.runtime && typeof vm.runtime.startHats === 'function') {
+          vm.runtime.startHats(`${this.id}_whenInput`);
+        }
+      } catch (e) {}
+    }
+
+    whenInput (args, util) {
+      try {
+        const tid = util?.target?.id ?? 'global';
+        if (!this._lastSeenEventIdByTarget) this._lastSeenEventIdByTarget = new Map();
+        const lastSeen = this._lastSeenEventIdByTarget.get(tid) || 0;
+        if ((this._inputEventId || 0) > lastSeen) {
+          this._lastSeenEventIdByTarget.set(tid, this._inputEventId);
+          return true;
+        }
+        return false;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    // Helper to get the target element (logArea or inputField) // <-- NEW HELPER
+    _getScrollTarget(targetString) {
+        const target = String(targetString || 'console').toLowerCase();
+        if (target === 'input') {
+            return this.inputField;
+        }
+        // Default to console
+        return this.logArea;
+    }
+
+    // ---- scroll ---- 
+    // MODIFIED: Accepts [TARGET]
+    setScrollTo (args) {
+        const targetEl = this._getScrollTarget(args.TARGET);
+        const y = Number(args.Y || 0);
+        
+        if (targetEl) {
+            // We only limit the scroll to Y axis here, no X limitation
+            const max = Math.max(0, targetEl.scrollHeight - targetEl.clientHeight);
+            targetEl.scrollTop = Math.min(max, Math.max(0, y));
+            
+            // Only update scroll cache for console, not input. Input's scroll state is volatile.
+            if (targetEl === this.logArea) {
+                 this._scrollCache = targetEl.scrollTop;
+            }
+        } else if (args.TARGET.toLowerCase() === 'console') {
+            // If console is not yet created, cache the scroll for later
+            this._scrollCache = Math.max(0, y);
+        }
+    }
+
+    // MODIFIED: Accepts [TARGET]
+    getMaxScroll (args) {
+        const targetEl = this._getScrollTarget(args.TARGET);
+        if (targetEl) {
+            return Math.max(0, targetEl.scrollHeight - targetEl.clientHeight);
+        }
+        return 0; 
+    }
+
+    // MODIFIED: Accepts [TARGET]
+    getCurrentScroll (args) {
+        const targetEl = this._getScrollTarget(args.TARGET);
+        if (targetEl) {
+            return targetEl.scrollTop;
+        }
+        // Only return cached scroll for console if it's the target, otherwise 0
+        if (args.TARGET.toLowerCase() === 'console') {
+            return (this._scrollCache || 0);
+        }
+        return 0;
+    }
+
+    setAutoScroll (args) {
+        this._autoScrollEnabled = !!args.ENABLED;
+    }
+
+    isAutoScroll () {
+        return !!this._autoScrollEnabled;
+    }
+
+    // Helper: applies console's cached scroll (only console uses cache)
+    _applyCachedScroll () { 
+        if (!this.logArea) return; 
+        const max = Math.max(0, this.logArea.scrollHeight - this.logArea.clientHeight); 
+        this.logArea.scrollTop = Math.min(max, Math.max(0, this._scrollCache || 0)); 
+    } 
+
+    _instantScrollToBottom () {
+        if (!this.logArea) return;
+        const hadObserver = !!this._observer;
+        if (hadObserver) try { this._observer.disconnect(); } catch (e) {}
+        const hadRecovery = !!this._recoveryInterval;
+        if (hadRecovery) try { clearInterval(this._recoveryInterval); } catch (e) {}
+
+        const prevBehavior = this.logArea.style.scrollBehavior || '';
+        const prevOverflow = this.logArea.style.overflowY || '';
+        
+        // Temporarily set scroll behavior to auto for instant scroll
+        this.logArea.style.scrollBehavior = 'auto'; 
+        // Temporarily hide overflow to prevent scroll bar flicker on some browsers
+        this.logArea.style.overflowY = 'hidden'; 
+        
+        // Read offsetHeight to force layout/reflow before setting scrollTop
+        void this.logArea.offsetHeight; 
+        
+        try { 
+            this.logArea.scrollTop = this.logArea.scrollHeight; 
+            this._scrollCache = this.logArea.scrollTop; 
+        } catch (e) {}
+
+        // Restore original styles
+        this.logArea.style.scrollBehavior = prevBehavior;
+        this.logArea.style.overflowY = prevOverflow;
+
+        if (hadObserver) try { this._observer.observe(this.stage); } catch (e) {}
+        if (hadRecovery) this._startRecovery();
+    }
   }
 
   // register extension
@@ -1505,10 +1844,9 @@
       Scratch.extensions.register(instance);
     } else {
       window.__consoleExtensionInstance = instance;
-      console.warn('[Console extension] instance available at window.__consoleExtensionInstance (registration API not found).');
+      console.warn('[Console extension] instance available at window.__consoleExtensionInstance');
     }
   } catch (e) {
-    console.error('[Console extension] registration failed:', e);
+    console.error('Failed to register ConsoleExtension:', e);
   }
-
-})(typeof Scratch !== 'undefined' ? Scratch : {});
+})(Scratch);
