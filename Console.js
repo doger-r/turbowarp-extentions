@@ -2,13 +2,12 @@
   'use strict';
 
   /**
-   * Console Extension v6.8
-   * * Changes v6.8:
-   * - Added 'set input position to [TOP/BOTTOM]' block.
-   * - Added 'set enter key behavior to [SUBMIT/NEWLINE/DISABLED]' block.
-   * - Fixed 'last input selection' reporter always returning 0.
-   * - Removed artificial text size limits (min size lowered to 0.1px).
-   * - Adjusted suggestion box location based on input position.
+   * Console Extension v7.0
+   * * Changes v7.0:
+   * - Added Minimum Height option for Input.
+   * - Added Text Style options (Default / Javascript Syntax Highlighting).
+   * - Added Gradient Mode options (Normal / Split per letter).
+   * - Fixed 'run input' block failing on empty strings.
    */
 
   const BlockType = (Scratch && Scratch.BlockType) ? Scratch.BlockType : {
@@ -66,11 +65,14 @@
         textAlign: 'left',
         inputAlign: 'left',
         lineSpacing: 1.4,
+        minInputHeightPct: 10,  // NEW
         maxInputHeightPct: 40, 
         consoleWrapping: 'wrap', 
         inputWrapping: 'wrap',
-        inputPosition: 'bottom', // 'top' or 'bottom'
-        enterBehavior: 'submit'  // 'submit', 'newline', 'disabled'
+        inputPosition: 'bottom',
+        enterBehavior: 'submit',
+        textStyle: 'default',   // NEW: 'default', 'javascript'
+        gradientMode: 'normal'  // NEW: 'normal', 'split'
       };
       this.style = Object.assign({}, this._defaults);
 
@@ -109,7 +111,8 @@
         'whenInput','getLastInput','getCurrentInput','isInputShown',
         'setAutocorrect', 'getSelectionPosition', 'setInputPosition', 'setEnterBehavior',
         'addCommand', 'removeCommand', 'clearCommands',
-        'setColorPicker','gradientReporter','gradient3Reporter','gradient4Reporter','setFont','setTextSizeMultiplier','setAlignment','setLineSpacing','setInputPlaceholder','setInputMaxHeight','setTextWrapping',
+        'setColorPicker','gradientReporter','gradient3Reporter','gradient4Reporter','setFont','setTextSizeMultiplier','setAlignment','setLineSpacing','setInputPlaceholder','setInputHeightRange','setTextWrapping',
+        'setTextStyle', 'setGradientMode', // NEW BLOCKS
         'resetStyling',
         'setScrollTo','getMaxScroll','getCurrentScroll','setAutoScroll','isAutoScroll'
       ];
@@ -173,7 +176,6 @@
           { opcode: 'getCurrentInput', blockType: BlockType.REPORTER, text: 'current input' },
           { opcode: 'isInputShown', blockType: BlockType.BOOLEAN, text: 'input shown?' },
 
-          // NEW BLOCKS
           { opcode: 'setInputPosition', blockType: BlockType.COMMAND, text: 'set input position to [POS]', arguments: { POS: { type: ArgumentType.STRING, menu: 'positionMenu', defaultValue: 'bottom' } } },
           { opcode: 'setEnterBehavior', blockType: BlockType.COMMAND, text: 'set enter key behavior to [BEHAVIOR]', arguments: { BEHAVIOR: { type: ArgumentType.STRING, menu: 'enterMenu', defaultValue: 'submit' } } },
 
@@ -190,6 +192,9 @@
           { opcode: 'gradient4Reporter', blockType: BlockType.REPORTER, text: 'gradient [COLOR1] to [COLOR2] to [COLOR3] to [COLOR4] angle [ANGLE]', arguments: { COLOR1: { type: ArgumentType.COLOR, defaultValue: '#000000' }, COLOR2: { type: ArgumentType.COLOR, defaultValue: '#444444' }, COLOR3: { type: ArgumentType.COLOR, defaultValue: '#888888' }, COLOR4: { type: ArgumentType.COLOR, defaultValue: '#CCCCCC' }, ANGLE: { type: ArgumentType.NUMBER, defaultValue: 180 } } },
 
           { opcode: 'setFont', blockType: BlockType.COMMAND, text: 'set [PART] font to [FONT]', arguments: { PART: { type: ArgumentType.STRING, menu: 'fontParts', defaultValue: 'text' }, FONT: { type: ArgumentType.STRING, defaultValue: 'Sans Serif' } } },
+          { opcode: 'setTextStyle', blockType: BlockType.COMMAND, text: 'set [PART] text style to [STYLE]', arguments: { PART: { type: ArgumentType.STRING, menu: 'styleParts', defaultValue: 'text' }, STYLE: { type: ArgumentType.STRING, menu: 'styleMenu', defaultValue: 'default' } } },
+          { opcode: 'setGradientMode', blockType: BlockType.COMMAND, text: 'set gradient mode to [MODE]', arguments: { MODE: { type: ArgumentType.STRING, menu: 'gradientModeMenu', defaultValue: 'normal' } } },
+
           { opcode: 'setTextSizeMultiplier', blockType: BlockType.COMMAND, text: 'set [PART] text size multiplier to [MULTIPLIER]', arguments: { PART: { type: ArgumentType.STRING, menu: 'sizeParts', defaultValue: 'text' }, MULTIPLIER: { type: ArgumentType.NUMBER, defaultValue: 1 } } },
           { opcode: 'setAlignment', blockType: BlockType.COMMAND, text: 'set [PART] alignment to [ALIGN]', arguments: { PART: { type: ArgumentType.STRING, menu: 'alignmentParts', defaultValue: 'text' }, ALIGN: { type: ArgumentType.STRING, menu: 'alignmentMenu', defaultValue: 'left' } } },
           { opcode: 'setTextWrapping', blockType: BlockType.COMMAND, text: 'set [PART] text wrapping to [MODE]', arguments: { PART: { type: ArgumentType.STRING, menu: 'wrappingParts', defaultValue: 'console' }, MODE: { type: ArgumentType.STRING, menu: 'wrappingMode', defaultValue: 'wrap' } } },
@@ -197,7 +202,8 @@
           { opcode: 'setLineSpacing', blockType: BlockType.COMMAND, text: 'set line spacing to [SPACING]', arguments: { SPACING: { type: ArgumentType.NUMBER, defaultValue: 1.4 } } },
           
           { opcode: 'setInputPlaceholder', blockType: BlockType.COMMAND, text: 'set input placeholder to [TEXT]', arguments: { TEXT: { type: ArgumentType.STRING, defaultValue: 'Type command...' } } },
-          { opcode: 'setInputMaxHeight', blockType: BlockType.COMMAND, text: 'set input max height % to [PERCENT]', arguments: { PERCENT: { type: ArgumentType.NUMBER, defaultValue: 40 } } },
+          // UPDATED BLOCK
+          { opcode: 'setInputHeightRange', blockType: BlockType.COMMAND, text: 'set input height min [MIN]% max [MAX]%', arguments: { MIN: { type: ArgumentType.NUMBER, defaultValue: 10 }, MAX: { type: ArgumentType.NUMBER, defaultValue: 40 } } },
 
           { opcode: 'setTimestampFormat', blockType: BlockType.COMMAND, text: 'set timestamp format to [FORMAT]', arguments: { FORMAT: { type: ArgumentType.STRING, menu: 'timeFormat', defaultValue: 'off' } } },
           { opcode: 'resetStyling', blockType: BlockType.COMMAND, text: 'reset styling' }
@@ -207,6 +213,9 @@
           timeFormat: ['off', '24h', '12h', 'relative'],
           colorParts: ['console background', 'input background', 'input text', 'timestamp text', 'input placeholder'],
           fontParts: ['text', 'timestamp', 'input'],
+          styleParts: ['text', 'input'],
+          styleMenu: ['default', 'javascript'],
+          gradientModeMenu: ['normal', 'split'],
           sizeParts: ['text', 'timestamp', 'input'],
           alignmentParts: ['text', 'input'],
           alignmentMenu: ['left', 'center', 'right'],
@@ -253,9 +262,15 @@
         .console-line span { vertical-align: middle; }
         .console-img { vertical-align: middle; max-width: 100%; display: inline-block; } 
         
+        /* Syntax Highlighting Classes */
+        .console-syntax-keyword { color: #569cd6 !important; font-weight: bold; }
+        .console-syntax-string { color: #ce9178 !important; }
+        .console-syntax-comment { color: #6a9955 !important; font-style: italic; }
+        .console-syntax-number { color: #b5cea8 !important; }
+        .console-syntax-built-in { color: #4ec9b0 !important; }
+
         .console-suggestions {
           position: absolute;
-          /* Positioning handled in JS now */
           left: 0; right: 0;
           max-height: 150px;
           overflow-y: auto;
@@ -365,11 +380,9 @@
       const scale = stageH / 360;
       const base = 14;
 
-      // Min clamp lowered to 0.1 to effectively remove limit
       this._computedTsPx = Math.max(0.1, base * scale * (this.style.sizeTimestamp || 1));
       this._computedInputPx = Math.max(0.1, base * scale * (this.style.sizeInput || 1));
 
-      // Resize all lines in logArea
       if (this.logArea) {
         for (const line of Array.from(this.logArea.children)) {
           if (line.classList.contains('console-spacing')) continue; 
@@ -379,7 +392,11 @@
 
           const spans = line.querySelectorAll('span');
           if (spans[0]) spans[0].style.fontSize = `${this._computedTsPx}px`;
-          if (spans[1]) spans[1].style.fontSize = `${linePx}px`;
+          
+          // Apply to all content spans (text can be split into multiple spans now)
+          for (let i = 1; i < spans.length; i++) {
+             spans[i].style.fontSize = `${linePx}px`;
+          }
         }
       }
 
@@ -396,7 +413,6 @@
         this.suggestionBox.style.fontFamily = this.style.fontInput;
       }
 
-      // Handle Padding for Input Position
       if (this.consoleOverlay) {
           if (this.inputField && this.inputVisible) {
               const inputHt = this.inputField.offsetHeight || (this._computedInputPx + 36);
@@ -422,14 +438,19 @@
         
         const stageH = this.stage.clientHeight || 360;
         const maxPct = this.style.maxInputHeightPct || 40; 
+        const minPct = this.style.minInputHeightPct || 10;
+        
         const maxHeightPx = stageH * (maxPct / 100);
+        const minHeightPx = stageH * (minPct / 100);
         
         const contentHeight = this.inputField.scrollHeight;
-        const finalHeight = Math.min(contentHeight, maxHeightPx);
+        
+        // Clamp between min and max
+        const clampedH = Math.min(Math.max(contentHeight, minHeightPx), maxHeightPx);
         
         // Ensure at least some height if contentHeight is weirdly 0
         const minH = this._computedInputPx ? (this._computedInputPx + 20) : 30;
-        const actualH = Math.max(minH, finalHeight);
+        const actualH = Math.max(minH, clampedH);
         
         this.inputField.style.height = `${actualH}px`;
 
@@ -489,7 +510,6 @@
       if (this.inputOverlay && this.stage.contains(this.inputOverlay)) return;
 
       const overlay = document.createElement('div');
-      // Position based on user preference
       if (this.style.inputPosition === 'top') {
           Object.assign(overlay.style, { 
               position: 'absolute', left: '0', right: '0', top: '0', bottom: 'auto', 
@@ -502,17 +522,15 @@
           });
       }
 
-      // -- Suggestion Box (Autofill) --
       const suggestionBox = document.createElement('div');
       suggestionBox.className = 'console-suggestions';
       suggestionBox.style.background = this.style.inputBG; 
       suggestionBox.style.color = this._firstColorFromRaw(this.style.inputTextRaw);
       
-      // Position suggestions relative to input
       if (this.style.inputPosition === 'top') {
           suggestionBox.style.top = '100%';
           suggestionBox.style.bottom = 'auto';
-          suggestionBox.style.flexDirection = 'column'; // Standard dropdown
+          suggestionBox.style.flexDirection = 'column'; 
           suggestionBox.style.borderTopLeftRadius = '0';
           suggestionBox.style.borderTopRightRadius = '0';
           suggestionBox.style.borderBottomLeftRadius = '4px';
@@ -521,7 +539,7 @@
       } else {
           suggestionBox.style.bottom = '100%';
           suggestionBox.style.top = 'auto';
-          suggestionBox.style.flexDirection = 'column-reverse'; // Grow upwards
+          suggestionBox.style.flexDirection = 'column-reverse'; 
           suggestionBox.style.borderBottomLeftRadius = '0';
           suggestionBox.style.borderBottomRightRadius = '0';
           suggestionBox.style.borderTopLeftRadius = '4px';
@@ -558,7 +576,6 @@
       input.placeholder = this.style.inputPlaceholder != null ? this.style.inputPlaceholder : this._defaults.inputPlaceholder;
       this._updatePlaceholderCSS(this.style.inputPlaceholderColorRaw || this._defaults.inputPlaceholderColorRaw);
 
-      // --- Track Selection ---
       const updateSelection = () => {
           this._currentSelection = {
               start: input.selectionStart || 0,
@@ -571,10 +588,8 @@
       input.addEventListener('focus', updateSelection);
       input.addEventListener('blur', updateSelection);
 
-      // --- Key Handling ---
       input.addEventListener('keydown', (e) => {
-        updateSelection(); // Track before any action
-
+        updateSelection(); 
         if (e.key === 'Tab') {
           e.preventDefault();
           if (this._activeSuggestions.length > 0) {
@@ -590,7 +605,7 @@
         if (e.key === 'ArrowUp') {
             if (this.suggestionBox.style.display === 'flex') {
                 e.preventDefault();
-                this._navigateSuggestions(1); // Nav logic assumes list order, direction handled by flex
+                this._navigateSuggestions(1);
             }
             return;
         }
@@ -602,33 +617,21 @@
             return;
         }
         
-        // Enter Key Logic based on Behavior Setting
         if (e.key === 'Enter') {
-            const behavior = this.style.enterBehavior; // 'submit', 'newline', 'disabled'
-
-            // --- DISABLED ---
+            const behavior = this.style.enterBehavior;
             if (behavior === 'disabled') {
                 e.preventDefault();
                 return;
             }
-
-            // --- NEWLINE ---
             if (behavior === 'newline') {
-                // Default textarea behavior is newline, so we just allow it unless shift logic changes
-                // If we want Shift+Enter to also be newline, we do nothing.
                 setTimeout(() => this._updateInputHeight(), 0);
                 return;
             }
-
-            // --- SUBMIT (Default) ---
             if (behavior === 'submit') {
-                // Shift+Enter creates newline
                 if (e.shiftKey) {
                     setTimeout(() => this._updateInputHeight(), 0);
                     return;
                 }
-                
-                // Submit logic
                 e.preventDefault();
                 if (this.suggestionBox.style.display === 'flex' && this._suggestionIndex !== -1) {
                     const chosen = this._activeSuggestions[this._suggestionIndex];
@@ -660,7 +663,6 @@
         setTimeout(() => this._hideSuggestions(), 200);
       });
       
-      // Initial focus isn't strictly necessary but helpful if user clicked show input
       input.addEventListener('focus', () => { 
           updateSelection();
           this._updateSuggestions(input.value); 
@@ -768,13 +770,13 @@
 
     _parseColorArg (colorArg) {
       const raw = String(colorArg || '').trim();
-      if (!raw) return { isGradient: false, color: '#FFFFFF', gradientCSS: '' };
+      if (!raw) return { isGradient: false, color: '#FFFFFF', gradientCSS: '', colors: [] };
       if (/^linear-gradient\(/i.test(raw)) {
         const firstMatch = raw.match(/rgba?\([^\)]+\)|#[0-9A-Fa-f]+|[a-zA-Z\-]+/);
         return { isGradient: true, color: firstMatch ? firstMatch[0] : '#FFFFFF', gradientCSS: raw, colors: [], angle: 180 };
       }
       const parts = raw.split(',').map(s => s.trim()).filter(Boolean);
-      if (parts.length <= 1) return { isGradient: false, color: parts[0] || '#FFFFFF', gradientCSS: '' };
+      if (parts.length <= 1) return { isGradient: false, color: parts[0] || '#FFFFFF', gradientCSS: '', colors: [parts[0] || '#FFFFFF'] };
       let angle = 180;
       let colors = parts.slice(0);
       const last = parts[parts.length - 1];
@@ -910,12 +912,27 @@
 
         container.appendChild(img);
       } else {
-        const msgSpan = document.createElement('span');
-        msgSpan.textContent = entry.text;
-        msgSpan.style.fontFamily = this.style.fontText; 
-        msgSpan.style.display = 'inline';
-        this._applyInlineTextColor(msgSpan, entry.colorRaw || '#FFFFFF');
-        container.appendChild(msgSpan);
+        // --- TEXT RENDERING LOGIC ---
+        // If style is javascript, we use a special renderer
+        // If not, we check gradient mode
+        if (this.style.textStyle === 'javascript') {
+            this._renderJavascriptSyntax(container, entry.text, this.style.fontText);
+        } else {
+            // Default / Normal
+            const parsed = this._parseColorArg(entry.colorRaw || '#FFFFFF');
+            if (this.style.gradientMode === 'split' && parsed.isGradient) {
+                // Split gradient per letter
+                this._renderSplitGradient(container, entry.text, parsed, this.style.fontText);
+            } else {
+                // Standard rendering
+                const msgSpan = document.createElement('span');
+                msgSpan.textContent = entry.text;
+                msgSpan.style.fontFamily = this.style.fontText; 
+                msgSpan.style.display = 'inline';
+                this._applyInlineTextColor(msgSpan, entry.colorRaw || '#FFFFFF');
+                container.appendChild(msgSpan);
+            }
+        }
       }
 
       this._applyLineStyle(container, entry);
@@ -923,12 +940,84 @@
       return container;
     }
 
+    // --- Helper: Javascript Syntax Highlighting ---
+    _renderJavascriptSyntax(container, text, font) {
+        // Regex for simple tokens
+        // Strings, Keywords, Comments, Numbers, everything else
+        const tokenRegex = /(\/\/.*)|(".*?")|('.*?')|\b(const|let|var|if|else|function|return|true|false|null|undefined|class|new|this|await|async|try|catch)\b|(\b\d+\b)|([\s\S])/g;
+        
+        let match;
+        while ((match = tokenRegex.exec(text)) !== null) {
+            const span = document.createElement('span');
+            span.style.fontFamily = font;
+            span.textContent = match[0];
+            
+            if (match[1]) span.className = 'console-syntax-comment';
+            else if (match[2] || match[3]) span.className = 'console-syntax-string';
+            else if (match[4]) span.className = 'console-syntax-keyword';
+            else if (match[5]) span.className = 'console-syntax-number';
+            else span.style.color = '#cccccc'; // Default color for code
+
+            container.appendChild(span);
+        }
+    }
+
+    // --- Helper: Split Gradient per Letter ---
+    _renderSplitGradient(container, text, parsedColor, font) {
+        // Simple RGB interpolation
+        const getRGB = (c) => {
+            const d = document.createElement('div');
+            d.style.color = c;
+            document.body.appendChild(d);
+            const col = window.getComputedStyle(d).color;
+            document.body.removeChild(d);
+            const m = col.match(/\d+/g);
+            return m ? m.map(Number) : [255, 255, 255];
+        }
+        
+        const colors = parsedColor.colors.length > 0 ? parsedColor.colors : [parsedColor.color];
+        const rgbStops = colors.map(getRGB);
+        
+        const chars = text.split('');
+        const len = chars.length;
+        
+        chars.forEach((char, i) => {
+            const span = document.createElement('span');
+            span.textContent = char;
+            span.style.fontFamily = font;
+            
+            if (len <= 1 || rgbStops.length <= 1) {
+                span.style.color = colors[0];
+            } else {
+                // Calculate position t from 0 to 1
+                const t = i / (len - 1);
+                // Map t to segment index
+                const segmentCount = rgbStops.length - 1;
+                const segmentPos = t * segmentCount;
+                const index = Math.floor(segmentPos);
+                const localT = segmentPos - index;
+                
+                const c1 = rgbStops[Math.min(index, segmentCount)];
+                const c2 = rgbStops[Math.min(index + 1, segmentCount)];
+                
+                const r = Math.round(c1[0] + (c2[0] - c1[0]) * localT);
+                const g = Math.round(c1[1] + (c2[1] - c1[1]) * localT);
+                const b = Math.round(c1[2] + (c2[2] - c1[2]) * localT);
+                
+                span.style.color = `rgb(${r},${g},${b})`;
+            }
+            container.appendChild(span);
+        });
+    }
+
     _applyLineStyle (el, entry) {
       if (!el) return;
       el.style.textAlign = entry.customAlign ? entry.customAlign : this.style.textAlign;
-      const msgSpan = el.querySelectorAll('span')[1];
-      if (msgSpan && entry.type === 'text') {
-        msgSpan.style.fontFamily = entry.customFont ? entry.customFont : this.style.fontText;
+      // Because we may have multiple spans now, applying font to 2nd child is risky
+      // We apply logic based on structure
+      const msgSpans = Array.from(el.children).filter(c => !c.classList.contains('console-timestamp'));
+      if (entry.customFont) {
+          msgSpans.forEach(s => s.style.fontFamily = entry.customFont);
       }
       if (entry.customSize) {
         el.dataset.sizeMult = String(entry.customSize);
@@ -1336,7 +1425,7 @@
         const ts = Number(c.dataset.ts || 0);
         const formatted = (this._timestampFormat === 'off') ? '' : this._formatTimestamp(ts);
         const spans = c.querySelectorAll('span');
-        if (spans[0]) spans[0].textContent = formatted ? `[${formatted}] ` : '';
+        if (spans[0] && spans[0].classList.contains('console-timestamp')) spans[0].textContent = formatted ? `[${formatted}] ` : '';
       }
     }
 
@@ -1345,7 +1434,7 @@
         const ts = Number(el.dataset.ts);
         const formatted = this._formatTimestamp(ts);
         const spans = el.querySelectorAll('span');
-        if (spans[0]) spans[0].textContent = formatted ? `[${formatted}] ` : '';
+        if (spans[0] && spans[0].classList.contains('console-timestamp')) spans[0].textContent = formatted ? `[${formatted}] ` : '';
     }
 
     _observeAllLines () {
@@ -1452,7 +1541,7 @@
         if (this.logArea) {
           for (const ch of Array.from(this.logArea.children)) {
             if (ch.classList.contains('console-spacing')) continue;
-            const tsSpan = ch.querySelectorAll('span')[0];
+            const tsSpan = ch.querySelector('.console-timestamp');
             if (tsSpan) this._applyInlineTextColor(tsSpan, this.style.timestampTextRaw);
           }
         }
@@ -1474,13 +1563,14 @@
       if (this.logArea) {
         for (const ch of Array.from(this.logArea.children)) {
           if (ch.classList.contains('console-spacing')) continue;
-          const tsSpan = ch.querySelectorAll('span')[0];
-          const msgSpan = ch.querySelectorAll('span')[1];
+          const tsSpan = ch.querySelector('.console-timestamp');
+          // All other spans are content
+          const msgSpans = Array.from(ch.children).filter(c => !c.classList.contains('console-timestamp'));
           const entry = this._consoleCache.find(e => String(e.id) === ch.dataset.id);
           
           if (part === 'timestamp' && tsSpan) tsSpan.style.fontFamily = this.style.fontTimestamp;
-          if (part === 'text' && msgSpan) {
-            if (!entry || !entry.customFont) msgSpan.style.fontFamily = this.style.fontText;
+          if (part === 'text') {
+            if (!entry || !entry.customFont) msgSpans.forEach(s => s.style.fontFamily = this.style.fontText);
           }
         }
       }
@@ -1493,7 +1583,6 @@
       const part = String(args.PART || 'text').toLowerCase();
       const m = Number(args.MULTIPLIER) || 1;
       
-      // Removed 1.0 limit, using 0.1 to avoid negatives/zeros
       if (part === 'text') this.style.sizeText = Math.max(0.01, m);
       else if (part === 'timestamp') this.style.sizeTimestamp = Math.max(0.01, m);
       else if (part === 'input') this.style.sizeInput = Math.max(0.01, m);
@@ -1532,8 +1621,9 @@
       if (this.inputField) this.inputField.placeholder = this.style.inputPlaceholder;
     }
 
-    setInputMaxHeight (args) {
-      this.style.maxInputHeightPct = Math.max(10, Math.min(100, Number(args.PERCENT) || 40));
+    setInputHeightRange (args) {
+      this.style.minInputHeightPct = Math.max(0, Math.min(100, Number(args.MIN) || 10));
+      this.style.maxInputHeightPct = Math.max(this.style.minInputHeightPct, Math.min(100, Number(args.MAX) || 40));
       this._updateInputHeight();
     }
 
@@ -1566,6 +1656,20 @@
       }
     }
 
+    setTextStyle(args) {
+        const style = String(args.STYLE || 'default').toLowerCase();
+        this.style.textStyle = (style === 'javascript') ? 'javascript' : 'default';
+        // Note: We don't retroactively apply this to existing lines unless re-rendering happens.
+        // Users usually set style at start. If dynamic update is needed, we could call _restoreConsoleCache()
+        this._restoreConsoleCache();
+    }
+
+    setGradientMode(args) {
+        const mode = String(args.MODE || 'normal').toLowerCase();
+        this.style.gradientMode = (mode === 'split') ? 'split' : 'normal';
+        this._restoreConsoleCache();
+    }
+
     resetStyling () {
       this.style = Object.assign({}, this._defaults);
       this._disconnectObserverAndLoop(); 
@@ -1573,7 +1677,7 @@
       this._refreshTimestamps();
       this.setLineSpacing({ SPACING: this.style.lineSpacing });
       this.setInputPlaceholder({ TEXT: this.style.inputPlaceholder });
-      this.setInputMaxHeight({ PERCENT: this.style.maxInputHeightPct });
+      this.setInputHeightRange({ MIN: this.style.minInputHeightPct, MAX: this.style.maxInputHeightPct });
       this.setTextWrapping({ PART: 'console', MODE: this.style.consoleWrapping });
       this.setTextWrapping({ PART: 'input', MODE: this.style.inputWrapping });
       this._applyInputBackground(this.style.inputBG);
@@ -1585,6 +1689,8 @@
       this.setAutocorrect({ ENABLED: false });
       this.setInputPosition({ POS: 'bottom' });
       this.setEnterBehavior({ BEHAVIOR: 'submit' });
+      this.setTextStyle({ STYLE: 'default' });
+      this.setGradientMode({ MODE: 'normal' });
 
       this._resizeDynamicSizes();
     }
@@ -1682,8 +1788,9 @@
       this._updateInputHeight();
     }
 
+    // FIXED: runInput handles empty string correctly now
     runInput (args) {
-      this._dispatchInput(String(args.TEXT || ''));
+      this._dispatchInput(String(args.TEXT ?? ''));
     }
 
     clearInput () {
@@ -1748,11 +1855,12 @@
     }
 
     _dispatchInput (text) {
-      const txt = String(text || '');
+      // Allow empty string to pass through (using ?? '')
+      const txt = String(text ?? '');
       this.lastInput = txt;
-      // Snapshot selection at moment of dispatch for 'last' reporter
       this._lastSelection = { ...this._currentSelection };
       
+      // Log only if text exists
       if (this.logInputEnabled && txt.trim()) this._log('> ' + txt.trim(), '#FFFFFF');
       
       this._inputEventId = (this._inputEventId || 0) + 1;
