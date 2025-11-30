@@ -2,12 +2,13 @@
   'use strict';
 
   /**
-   * Console Extension v6.9
-   * * Changes v6.9:
-   * - Added 'set input [MIN/MAX] height % to [PERCENT]' block.
-   * - Added 'set [PART] formatting to [TEXT/JAVASCRIPT]' block.
-   * - Javascript mode highlights '// comments' while respecting line color.
-   * - Fixed 'run [TEXT]' block handling of empty strings and '0' values.
+   * Console Extension v6.8
+   * * Changes v6.8:
+   * - Added 'set input position to [TOP/BOTTOM]' block.
+   * - Added 'set enter key behavior to [SUBMIT/NEWLINE/DISABLED]' block.
+   * - Fixed 'last input selection' reporter always returning 0.
+   * - Removed artificial text size limits (min size lowered to 0.1px).
+   * - Adjusted suggestion box location based on input position.
    */
 
   const BlockType = (Scratch && Scratch.BlockType) ? Scratch.BlockType : {
@@ -65,14 +66,11 @@
         textAlign: 'left',
         inputAlign: 'left',
         lineSpacing: 1.4,
-        maxInputHeightPct: 40,
-        minInputHeightPct: 10, // Default min height
+        maxInputHeightPct: 40, 
         consoleWrapping: 'wrap', 
         inputWrapping: 'wrap',
-        inputPosition: 'bottom',
-        enterBehavior: 'submit',
-        consoleFormatting: 'text', // 'text' or 'javascript'
-        inputFormatting: 'text'
+        inputPosition: 'bottom', // 'top' or 'bottom'
+        enterBehavior: 'submit'  // 'submit', 'newline', 'disabled'
       };
       this.style = Object.assign({}, this._defaults);
 
@@ -111,7 +109,7 @@
         'whenInput','getLastInput','getCurrentInput','isInputShown',
         'setAutocorrect', 'getSelectionPosition', 'setInputPosition', 'setEnterBehavior',
         'addCommand', 'removeCommand', 'clearCommands',
-        'setColorPicker','gradientReporter','gradient3Reporter','gradient4Reporter','setFont','setTextSizeMultiplier','setAlignment','setLineSpacing','setInputPlaceholder','setInputHeightConstraint','setTextWrapping','setTextFormatting',
+        'setColorPicker','gradientReporter','gradient3Reporter','gradient4Reporter','setFont','setTextSizeMultiplier','setAlignment','setLineSpacing','setInputPlaceholder','setInputMaxHeight','setTextWrapping',
         'resetStyling',
         'setScrollTo','getMaxScroll','getCurrentScroll','setAutoScroll','isAutoScroll'
       ];
@@ -175,6 +173,7 @@
           { opcode: 'getCurrentInput', blockType: BlockType.REPORTER, text: 'current input' },
           { opcode: 'isInputShown', blockType: BlockType.BOOLEAN, text: 'input shown?' },
 
+          // NEW BLOCKS
           { opcode: 'setInputPosition', blockType: BlockType.COMMAND, text: 'set input position to [POS]', arguments: { POS: { type: ArgumentType.STRING, menu: 'positionMenu', defaultValue: 'bottom' } } },
           { opcode: 'setEnterBehavior', blockType: BlockType.COMMAND, text: 'set enter key behavior to [BEHAVIOR]', arguments: { BEHAVIOR: { type: ArgumentType.STRING, menu: 'enterMenu', defaultValue: 'submit' } } },
 
@@ -194,14 +193,11 @@
           { opcode: 'setTextSizeMultiplier', blockType: BlockType.COMMAND, text: 'set [PART] text size multiplier to [MULTIPLIER]', arguments: { PART: { type: ArgumentType.STRING, menu: 'sizeParts', defaultValue: 'text' }, MULTIPLIER: { type: ArgumentType.NUMBER, defaultValue: 1 } } },
           { opcode: 'setAlignment', blockType: BlockType.COMMAND, text: 'set [PART] alignment to [ALIGN]', arguments: { PART: { type: ArgumentType.STRING, menu: 'alignmentParts', defaultValue: 'text' }, ALIGN: { type: ArgumentType.STRING, menu: 'alignmentMenu', defaultValue: 'left' } } },
           { opcode: 'setTextWrapping', blockType: BlockType.COMMAND, text: 'set [PART] text wrapping to [MODE]', arguments: { PART: { type: ArgumentType.STRING, menu: 'wrappingParts', defaultValue: 'console' }, MODE: { type: ArgumentType.STRING, menu: 'wrappingMode', defaultValue: 'wrap' } } },
-          // NEW BLOCKS
-          { opcode: 'setTextFormatting', blockType: BlockType.COMMAND, text: 'set [PART] formatting to [FORMAT]', arguments: { PART: { type: ArgumentType.STRING, menu: 'formatParts', defaultValue: 'console' }, FORMAT: { type: ArgumentType.STRING, menu: 'formatMenu', defaultValue: 'text' } } },
 
           { opcode: 'setLineSpacing', blockType: BlockType.COMMAND, text: 'set line spacing to [SPACING]', arguments: { SPACING: { type: ArgumentType.NUMBER, defaultValue: 1.4 } } },
           
           { opcode: 'setInputPlaceholder', blockType: BlockType.COMMAND, text: 'set input placeholder to [TEXT]', arguments: { TEXT: { type: ArgumentType.STRING, defaultValue: 'Type command...' } } },
-          // UPDATED BLOCK
-          { opcode: 'setInputHeightConstraint', blockType: BlockType.COMMAND, text: 'set input [DIMENSION] height % to [PERCENT]', arguments: { DIMENSION: { type: ArgumentType.STRING, menu: 'minMaxMenu', defaultValue: 'max' }, PERCENT: { type: ArgumentType.NUMBER, defaultValue: 40 } } },
+          { opcode: 'setInputMaxHeight', blockType: BlockType.COMMAND, text: 'set input max height % to [PERCENT]', arguments: { PERCENT: { type: ArgumentType.NUMBER, defaultValue: 40 } } },
 
           { opcode: 'setTimestampFormat', blockType: BlockType.COMMAND, text: 'set timestamp format to [FORMAT]', arguments: { FORMAT: { type: ArgumentType.STRING, menu: 'timeFormat', defaultValue: 'off' } } },
           { opcode: 'resetStyling', blockType: BlockType.COMMAND, text: 'reset styling' }
@@ -220,11 +216,7 @@
           inputSourceMenu: ['current', 'last'],
           selectionPositionMenu: ['start', 'end'],
           positionMenu: ['top', 'bottom'],
-          enterMenu: ['submit', 'newline', 'disabled'],
-          // NEW MENUS
-          minMaxMenu: ['min', 'max'],
-          formatParts: ['console', 'input'],
-          formatMenu: ['text', 'javascript']
+          enterMenu: ['submit', 'newline', 'disabled']
         }
       };
     }
@@ -263,6 +255,7 @@
         
         .console-suggestions {
           position: absolute;
+          /* Positioning handled in JS now */
           left: 0; right: 0;
           max-height: 150px;
           overflow-y: auto;
@@ -286,12 +279,6 @@
           opacity: 1.0;
           background: rgba(255,255,255,0.15);
           font-weight: bold;
-        }
-        
-        /* Comment Styling for Javascript Mode */
-        .console-comment {
-           opacity: 0.6;
-           font-style: italic;
         }
       `;
       document.head.appendChild(style);
@@ -378,6 +365,7 @@
       const scale = stageH / 360;
       const base = 14;
 
+      // Min clamp lowered to 0.1 to effectively remove limit
       this._computedTsPx = Math.max(0.1, base * scale * (this.style.sizeTimestamp || 1));
       this._computedInputPx = Math.max(0.1, base * scale * (this.style.sizeInput || 1));
 
@@ -434,19 +422,14 @@
         
         const stageH = this.stage.clientHeight || 360;
         const maxPct = this.style.maxInputHeightPct || 40; 
-        const minPct = this.style.minInputHeightPct || 0;
-        
         const maxHeightPx = stageH * (maxPct / 100);
-        const minHeightPx = stageH * (minPct / 100);
-
-        const contentHeight = this.inputField.scrollHeight;
         
-        // Clamp height
-        const finalHeight = Math.min(Math.max(contentHeight, minHeightPx), maxHeightPx);
+        const contentHeight = this.inputField.scrollHeight;
+        const finalHeight = Math.min(contentHeight, maxHeightPx);
         
         // Ensure at least some height if contentHeight is weirdly 0
-        const absoluteMin = this._computedInputPx ? (this._computedInputPx + 20) : 30;
-        const actualH = Math.max(absoluteMin, finalHeight);
+        const minH = this._computedInputPx ? (this._computedInputPx + 20) : 30;
+        const actualH = Math.max(minH, finalHeight);
         
         this.inputField.style.height = `${actualH}px`;
 
@@ -632,6 +615,7 @@
             // --- NEWLINE ---
             if (behavior === 'newline') {
                 // Default textarea behavior is newline, so we just allow it unless shift logic changes
+                // If we want Shift+Enter to also be newline, we do nothing.
                 setTimeout(() => this._updateInputHeight(), 0);
                 return;
             }
@@ -927,33 +911,8 @@
         container.appendChild(img);
       } else {
         const msgSpan = document.createElement('span');
-        // Handle Formatting (Javascript vs Text)
-        if (this.style.consoleFormatting === 'javascript') {
-            msgSpan.style.fontFamily = 'monospace'; // Force monospace for code
-            
-            // Simple syntax highlight: detect // and style rest of line
-            const textContent = entry.text;
-            const commentIndex = textContent.indexOf('//');
-            
-            if (commentIndex !== -1) {
-                const codePart = textContent.substring(0, commentIndex);
-                const commentPart = textContent.substring(commentIndex);
-                
-                // We use document fragment to avoid innerHTML injection issues
-                msgSpan.appendChild(document.createTextNode(codePart));
-                
-                const commentSpan = document.createElement('span');
-                commentSpan.className = 'console-comment';
-                commentSpan.textContent = commentPart;
-                msgSpan.appendChild(commentSpan);
-            } else {
-                msgSpan.textContent = textContent;
-            }
-        } else {
-            msgSpan.textContent = entry.text;
-            msgSpan.style.fontFamily = this.style.fontText; 
-        }
-
+        msgSpan.textContent = entry.text;
+        msgSpan.style.fontFamily = this.style.fontText; 
         msgSpan.style.display = 'inline';
         this._applyInlineTextColor(msgSpan, entry.colorRaw || '#FFFFFF');
         container.appendChild(msgSpan);
@@ -969,10 +928,7 @@
       el.style.textAlign = entry.customAlign ? entry.customAlign : this.style.textAlign;
       const msgSpan = el.querySelectorAll('span')[1];
       if (msgSpan && entry.type === 'text') {
-        // Only apply custom font if not in JS mode, or if user explicitly overrode it on a line level
-        if (this.style.consoleFormatting !== 'javascript' || entry.customFont) {
-             msgSpan.style.fontFamily = entry.customFont ? entry.customFont : this.style.fontText;
-        }
+        msgSpan.style.fontFamily = entry.customFont ? entry.customFont : this.style.fontText;
       }
       if (entry.customSize) {
         el.dataset.sizeMult = String(entry.customSize);
@@ -1576,15 +1532,8 @@
       if (this.inputField) this.inputField.placeholder = this.style.inputPlaceholder;
     }
 
-    setInputHeightConstraint (args) {
-      const dim = String(args.DIMENSION || 'max').toLowerCase();
-      const pct = Math.max(0, Math.min(100, Number(args.PERCENT) || 0));
-
-      if (dim === 'min') {
-         this.style.minInputHeightPct = pct;
-      } else {
-         this.style.maxInputHeightPct = Math.max(10, pct);
-      }
+    setInputMaxHeight (args) {
+      this.style.maxInputHeightPct = Math.max(10, Math.min(100, Number(args.PERCENT) || 40));
       this._updateInputHeight();
     }
 
@@ -1616,23 +1565,6 @@
         }
       }
     }
-    
-    setTextFormatting (args) {
-        const part = String(args.PART || 'console').toLowerCase();
-        const fmt = String(args.FORMAT || 'text').toLowerCase();
-        
-        if (part === 'console') {
-            this.style.consoleFormatting = fmt;
-            // Force re-render of lines to apply new formatting
-            this._restoreConsoleCache();
-        } else if (part === 'input') {
-            this.style.inputFormatting = fmt;
-            // For input, just setting font family if JS is selected is a simple improvement
-            if (this.inputField) {
-                 this.inputField.style.fontFamily = (fmt === 'javascript') ? 'monospace' : this.style.fontInput;
-            }
-        }
-    }
 
     resetStyling () {
       this.style = Object.assign({}, this._defaults);
@@ -1641,12 +1573,9 @@
       this._refreshTimestamps();
       this.setLineSpacing({ SPACING: this.style.lineSpacing });
       this.setInputPlaceholder({ TEXT: this.style.inputPlaceholder });
-      this.setInputHeightConstraint({ DIMENSION: 'max', PERCENT: this.style.maxInputHeightPct });
-      this.setInputHeightConstraint({ DIMENSION: 'min', PERCENT: this.style.minInputHeightPct });
+      this.setInputMaxHeight({ PERCENT: this.style.maxInputHeightPct });
       this.setTextWrapping({ PART: 'console', MODE: this.style.consoleWrapping });
       this.setTextWrapping({ PART: 'input', MODE: this.style.inputWrapping });
-      this.setTextFormatting({ PART: 'console', FORMAT: 'text' });
-      this.setTextFormatting({ PART: 'input', FORMAT: 'text' });
       this._applyInputBackground(this.style.inputBG);
       this._applyInputTextColor(this.style.inputTextRaw);
       this.setColorPicker({ PART: 'console background', COLOR: this.style.consoleBG });
@@ -1754,9 +1683,7 @@
     }
 
     runInput (args) {
-      // FIX: Handle '0' and empty strings safely
-      const txt = (args.TEXT !== undefined && args.TEXT !== null) ? String(args.TEXT) : '';
-      this._dispatchInput(txt);
+      this._dispatchInput(String(args.TEXT || ''));
     }
 
     clearInput () {
