@@ -2,12 +2,12 @@
   'use strict';
 
   /**
-   * Console Extension v7.0
-   * * Changes v7.0:
-   * - Added Minimum Height option for Input.
-   * - Added Text Style options (Default / Javascript Syntax Highlighting).
-   * - Added Gradient Mode options (Normal / Split per letter).
-   * - Fixed 'run input' block failing on empty strings.
+   * Console Extension v7.2
+   * * Changes v7.2:
+   * - Fixed Input Text Selection offset issues by normalizing box-models.
+   * - 'Set color' blocks now strictly ignored if Text Style is 'javascript'.
+   * - Added Scrollbar Visibility controls (Horizontal/Vertical).
+   * - Fixed Background 'Scrollable' vs 'Static' logic.
    */
 
   const BlockType = (Scratch && Scratch.BlockType) ? Scratch.BlockType : {
@@ -28,7 +28,12 @@
       this.consoleOverlay = null;
       this.inputOverlay = null;
       this.logArea = null;
-      this.inputField = null;
+      
+      // Input Specifics
+      this.inputWrapper = null; 
+      this.inputHighlight = null; 
+      this.inputField = null; 
+      
       this.suggestionBox = null;
       this.stage = null;
 
@@ -65,14 +70,26 @@
         textAlign: 'left',
         inputAlign: 'left',
         lineSpacing: 1.4,
-        minInputHeightPct: 10,  // NEW
+        minInputHeightPct: 10,  
         maxInputHeightPct: 40, 
         consoleWrapping: 'wrap', 
         inputWrapping: 'wrap',
         inputPosition: 'bottom',
         enterBehavior: 'submit',
-        textStyle: 'default',   // NEW: 'default', 'javascript'
-        gradientMode: 'normal'  // NEW: 'normal', 'split'
+        textStyle: 'default',   
+        gradientMode: 'normal',
+        
+        // Background props
+        consoleBgImage: '',
+        inputBgImage: '',
+        consoleBgAttachment: 'static', 
+        inputBgAttachment: 'static',
+
+        // Scrollbar props
+        consoleScrollbarX: 'hide',
+        consoleScrollbarY: 'hide',
+        inputScrollbarX: 'hide',
+        inputScrollbarY: 'hide'
       };
       this.style = Object.assign({}, this._defaults);
 
@@ -112,7 +129,8 @@
         'setAutocorrect', 'getSelectionPosition', 'setInputPosition', 'setEnterBehavior',
         'addCommand', 'removeCommand', 'clearCommands',
         'setColorPicker','gradientReporter','gradient3Reporter','gradient4Reporter','setFont','setTextSizeMultiplier','setAlignment','setLineSpacing','setInputPlaceholder','setInputHeightRange','setTextWrapping',
-        'setTextStyle', 'setGradientMode', // NEW BLOCKS
+        'setTextStyle', 'setGradientMode', 
+        'setBackgroundImage', 'setBackgroundAttachment', 'setScrollbarVisibility', // NEW BLOCKS
         'resetStyling',
         'setScrollTo','getMaxScroll','getCurrentScroll','setAutoScroll','isAutoScroll'
       ];
@@ -152,13 +170,16 @@
           { opcode: 'getConsoleLineCount', blockType: BlockType.REPORTER, text: 'console line count' },
           { opcode: 'isConsoleShown', blockType: BlockType.BOOLEAN, text: 'console shown?' },
 
-          { blockType: BlockType.LABEL, text: 'Scroll' },
+          { blockType: BlockType.LABEL, text: 'Scroll & View' },
           { opcode: 'setScrollTo', blockType: BlockType.COMMAND, text: 'set [TARGET] scroll to [Y]', arguments: { TARGET: { type: ArgumentType.STRING, menu: 'scrollTargetMenu', defaultValue: 'console' }, Y: { type: ArgumentType.NUMBER, defaultValue: 0 } } },
           { opcode: 'getMaxScroll', blockType: BlockType.REPORTER, text: '[TARGET] max scroll', arguments: { TARGET: { type: ArgumentType.STRING, menu: 'scrollTargetMenu', defaultValue: 'console' } } },
           { opcode: 'getCurrentScroll', blockType: BlockType.REPORTER, text: '[TARGET] current scroll', arguments: { TARGET: { type: ArgumentType.STRING, menu: 'scrollTargetMenu', defaultValue: 'console' } } },
           
           { opcode: 'setAutoScroll', blockType: BlockType.COMMAND, text: 'set autscroll to [ENABLED]', arguments: { ENABLED: { type: ArgumentType.BOOLEAN, defaultValue: true } } },
           { opcode: 'isAutoScroll', blockType: BlockType.BOOLEAN, text: 'is autoscroll on?' },
+          
+          // NEW SCROLLBAR BLOCK
+          { opcode: 'setScrollbarVisibility', blockType: BlockType.COMMAND, text: 'set [PART] [AXIS] scrollbar to [VISIBILITY]', arguments: { PART: { type: ArgumentType.STRING, menu: 'wrappingParts', defaultValue: 'console' }, AXIS: { type: ArgumentType.STRING, menu: 'scrollAxis', defaultValue: 'vertical' }, VISIBILITY: { type: ArgumentType.STRING, menu: 'visibilityMenu', defaultValue: 'hide' } } },
 
           { blockType: BlockType.LABEL, text: 'Input & Autofill' },
           { opcode: 'toggleInput', blockType: BlockType.COMMAND, text: '[ACTION] input', arguments: { ACTION: { type: ArgumentType.STRING, menu: 'toggleMenu', defaultValue: 'show' } } },
@@ -187,6 +208,10 @@
 
           { blockType: BlockType.LABEL, text: 'Global Styling' },
           { opcode: 'setColorPicker', blockType: BlockType.COMMAND, text: 'set [PART] color to [COLOR]', arguments: { PART: { type: ArgumentType.STRING, menu: 'colorParts', defaultValue: 'console background' }, COLOR: { type: ArgumentType.COLOR, defaultValue: '#000000' } } },
+          
+          { opcode: 'setBackgroundImage', blockType: BlockType.COMMAND, text: 'set [PART] background image to [URL]', arguments: { PART: { type: ArgumentType.STRING, menu: 'wrappingParts', defaultValue: 'console' }, URL: { type: ArgumentType.STRING, defaultValue: '' } } },
+          { opcode: 'setBackgroundAttachment', blockType: BlockType.COMMAND, text: 'set [PART] background mode to [MODE]', arguments: { PART: { type: ArgumentType.STRING, menu: 'wrappingParts', defaultValue: 'console' }, MODE: { type: ArgumentType.STRING, menu: 'bgAttachmentMenu', defaultValue: 'static' } } },
+
           { opcode: 'gradientReporter', blockType: BlockType.REPORTER, text: 'gradient [COLOR1] to [COLOR2] angle [ANGLE]', arguments: { COLOR1: { type: ArgumentType.COLOR, defaultValue: '#000000' }, COLOR2: { type: ArgumentType.COLOR, defaultValue: '#333333' }, ANGLE: { type: ArgumentType.NUMBER, defaultValue: 180 } } },
           { opcode: 'gradient3Reporter', blockType: BlockType.REPORTER, text: 'gradient [COLOR1] to [COLOR2] to [COLOR3] angle [ANGLE]', arguments: { COLOR1: { type: ArgumentType.COLOR, defaultValue: '#000000' }, COLOR2: { type: ArgumentType.COLOR, defaultValue: '#555555' }, COLOR3: { type: ArgumentType.COLOR, defaultValue: '#999999' }, ANGLE: { type: ArgumentType.NUMBER, defaultValue: 180 } } },
           { opcode: 'gradient4Reporter', blockType: BlockType.REPORTER, text: 'gradient [COLOR1] to [COLOR2] to [COLOR3] to [COLOR4] angle [ANGLE]', arguments: { COLOR1: { type: ArgumentType.COLOR, defaultValue: '#000000' }, COLOR2: { type: ArgumentType.COLOR, defaultValue: '#444444' }, COLOR3: { type: ArgumentType.COLOR, defaultValue: '#888888' }, COLOR4: { type: ArgumentType.COLOR, defaultValue: '#CCCCCC' }, ANGLE: { type: ArgumentType.NUMBER, defaultValue: 180 } } },
@@ -202,7 +227,6 @@
           { opcode: 'setLineSpacing', blockType: BlockType.COMMAND, text: 'set line spacing to [SPACING]', arguments: { SPACING: { type: ArgumentType.NUMBER, defaultValue: 1.4 } } },
           
           { opcode: 'setInputPlaceholder', blockType: BlockType.COMMAND, text: 'set input placeholder to [TEXT]', arguments: { TEXT: { type: ArgumentType.STRING, defaultValue: 'Type command...' } } },
-          // UPDATED BLOCK
           { opcode: 'setInputHeightRange', blockType: BlockType.COMMAND, text: 'set input height min [MIN]% max [MAX]%', arguments: { MIN: { type: ArgumentType.NUMBER, defaultValue: 10 }, MAX: { type: ArgumentType.NUMBER, defaultValue: 40 } } },
 
           { opcode: 'setTimestampFormat', blockType: BlockType.COMMAND, text: 'set timestamp format to [FORMAT]', arguments: { FORMAT: { type: ArgumentType.STRING, menu: 'timeFormat', defaultValue: 'off' } } },
@@ -221,11 +245,14 @@
           alignmentMenu: ['left', 'center', 'right'],
           wrappingParts: ['console', 'input'],
           wrappingMode: ['wrap', 'scroll'],
+          bgAttachmentMenu: ['static', 'scrollable'],
           scrollTargetMenu: ['console', 'input'],
           inputSourceMenu: ['current', 'last'],
           selectionPositionMenu: ['start', 'end'],
           positionMenu: ['top', 'bottom'],
-          enterMenu: ['submit', 'newline', 'disabled']
+          enterMenu: ['submit', 'newline', 'disabled'],
+          scrollAxis: ['horizontal', 'vertical'],
+          visibilityMenu: ['show', 'hide']
         }
       };
     }
@@ -234,9 +261,19 @@
     _injectBaseCSS () {
       const style = document.createElement('style');
       style.textContent = `
-        .consoleOverlay, .consoleOverlay * { scrollbar-width: none; -ms-overflow-style: none; }
-        .consoleOverlay::-webkit-scrollbar, .consoleOverlay *::-webkit-scrollbar { display: none; }
+        /* BASE SCROLLBAR HIDING (Default) */
+        .console-scroller { scrollbar-width: none; -ms-overflow-style: none; }
+        .console-scroller::-webkit-scrollbar { display: none; }
+
+        /* SCROLLBAR VISIBILITY OVERRIDES */
+        .console-scroller.sb-show-y { overflow-y: auto !important; scrollbar-width: auto !important; }
+        .console-scroller.sb-show-y::-webkit-scrollbar { display: block !important; width: 8px; background: rgba(0,0,0,0.1); }
+        .console-scroller.sb-show-y::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 4px; }
         
+        .console-scroller.sb-show-x { overflow-x: auto !important; scrollbar-width: auto !important; }
+        .console-scroller.sb-show-x::-webkit-scrollbar { display: block !important; height: 8px; background: rgba(0,0,0,0.1); }
+        .console-scroller.sb-show-x::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 4px; }
+
         .console-line { 
           display: block; 
           width: fit-content; 
@@ -244,23 +281,54 @@
         }
         .console-spacing { width: 100%; display: block; } 
 
+        /* INPUT STRUCTURE CSS */
+        .console-input-wrapper {
+          position: relative;
+          display: block;
+          margin: 0;
+          padding: 10px; /* Padding lives on wrapper now */
+          width: 100%;
+          overflow: hidden; 
+          background: transparent;
+          box-sizing: border-box;
+        }
+
+        .console-input-highlight {
+          position: absolute;
+          top: 10px; left: 10px; right: 10px; bottom: 10px; /* Match wrapper padding */
+          z-index: 1;
+          pointer-events: none; 
+          color: transparent; 
+          white-space: pre-wrap;
+          word-break: break-word;
+          overflow: hidden; /* Synced via JS */
+          margin: 0;
+          padding: 0;
+          border: none;
+          background: transparent;
+          box-sizing: border-box;
+        }
+
         .console-input { 
+          position: relative;
+          z-index: 2;
+          width: 100%; 
+          height: 100%;
+          border: none !important; 
           outline: none !important; 
           box-shadow: none !important; 
-          border: none !important; 
-          background-repeat: no-repeat;
+          background-color: transparent !important; 
           resize: none !important;
-          overflow-y: auto; 
+          overflow: hidden; /* Synced via JS mostly, or classes */
           display: block; 
           margin: 0; 
-          scrollbar-width: none; 
-          -ms-overflow-style: none; 
+          padding: 0; /* Padding is on wrapper */
+          box-sizing: border-box;
+          color: inherit; 
+          font-family: inherit;
         }
-        .console-input::-webkit-scrollbar { display: none; }
-
+        
         .console-input::placeholder { color: var(--console-input-placeholder-color, ${this._defaults.inputPlaceholderColorRaw}) !important; opacity: 1 !important; }
-        .console-line span { vertical-align: middle; }
-        .console-img { vertical-align: middle; max-width: 100%; display: inline-block; } 
         
         /* Syntax Highlighting Classes */
         .console-syntax-keyword { color: #569cd6 !important; font-weight: bold; }
@@ -278,11 +346,9 @@
           z-index: 100;
           box-shadow: 0px 2px 10px rgba(0,0,0,0.3);
           border-radius: 4px;
-          scrollbar-width: none; 
-          -ms-overflow-style: none;
         }
-        .console-suggestions::-webkit-scrollbar { display: none; }
-
+        .console-suggestions.sb-show-y { scrollbar-width: auto; }
+        
         .console-suggestion-item {
           padding: 8px 10px;
           cursor: pointer;
@@ -365,9 +431,14 @@
         if (this.inputOverlay && this.inputField && typeof this.inputField.value === 'string') this._inputCache = this.inputField.value;
         this.inputOverlay = null;
         this.inputField = null;
+        this.inputWrapper = null;
+        this.inputHighlight = null;
         this.suggestionBox = null;
         this._createInput();
-        if (this.inputField && this._inputCache) this.inputField.value = this._inputCache;
+        if (this.inputField && this._inputCache) {
+             this.inputField.value = this._inputCache;
+             this._updateInputSyntax(); 
+        }
       }
       if (Date.now() - (this._lastUserScroll || 0) > this._userScrollGrace) this._applyCachedScroll();
     }
@@ -393,18 +464,25 @@
           const spans = line.querySelectorAll('span');
           if (spans[0]) spans[0].style.fontSize = `${this._computedTsPx}px`;
           
-          // Apply to all content spans (text can be split into multiple spans now)
           for (let i = 1; i < spans.length; i++) {
              spans[i].style.fontSize = `${linePx}px`;
           }
         }
       }
 
-      if (this.inputField) {
-        this.inputField.style.fontSize = `${this._computedInputPx}px`;
-        this.inputField.style.fontFamily = this.style.fontInput;
-        this.inputField.style.textAlign = this.style.inputAlign;
-        this.inputField.style.lineHeight = '1.5';
+      if (this.inputField && this.inputHighlight) {
+        const fontStr = `${this._computedInputPx}px ${this.style.fontInput}`;
+        
+        const props = {
+            fontSize: `${this._computedInputPx}px`,
+            fontFamily: this.style.fontInput,
+            textAlign: this.style.inputAlign,
+            lineHeight: '1.5',
+            letterSpacing: 'normal'
+        };
+        
+        Object.assign(this.inputField.style, props);
+        Object.assign(this.inputHighlight.style, props);
         
         this._updateInputHeight();
       }
@@ -415,7 +493,7 @@
 
       if (this.consoleOverlay) {
           if (this.inputField && this.inputVisible) {
-              const inputHt = this.inputField.offsetHeight || (this._computedInputPx + 36);
+              const inputHt = this.inputWrapper ? this.inputWrapper.offsetHeight : (this._computedInputPx + 36);
               if (this.style.inputPosition === 'top') {
                   this.consoleOverlay.style.paddingTop = `${inputHt}px`;
                   this.consoleOverlay.style.paddingBottom = '';
@@ -430,11 +508,10 @@
       }
     }
 
-    // Helper to calculate auto-height for input
     _updateInputHeight() {
-        if (!this.inputField || !this.stage) return;
+        if (!this.inputField || !this.inputWrapper || !this.stage) return;
         
-        this.inputField.style.height = '1px'; // Force shrink to calculate scrollHeight
+        this.inputField.style.height = '1px'; 
         
         const stageH = this.stage.clientHeight || 360;
         const maxPct = this.style.maxInputHeightPct || 40; 
@@ -445,14 +522,14 @@
         
         const contentHeight = this.inputField.scrollHeight;
         
-        // Clamp between min and max
         const clampedH = Math.min(Math.max(contentHeight, minHeightPx), maxHeightPx);
-        
-        // Ensure at least some height if contentHeight is weirdly 0
         const minH = this._computedInputPx ? (this._computedInputPx + 20) : 30;
         const actualH = Math.max(minH, clampedH);
         
-        this.inputField.style.height = `${actualH}px`;
+        // Apply height to wrapper
+        this.inputWrapper.style.height = `${actualH}px`;
+        // Input fills wrapper minus padding
+        this.inputField.style.height = '100%'; 
 
         if (this.consoleOverlay && this.inputVisible) {
             if (this.style.inputPosition === 'top') {
@@ -476,20 +553,25 @@
         position: 'absolute',
         top: '0', left: '0', right: '0', bottom: '0',
         display: 'flex', flexDirection: 'column',
-        zIndex: '50', overflowY: 'auto', padding: '10px',
-        background: this.style.consoleBG,
+        zIndex: '50', padding: '10px',
         boxSizing: 'border-box',
-        userSelect: this.textSelectable ? 'text' : 'none'
+        userSelect: this.textSelectable ? 'text' : 'none',
+        pointerEvents: 'none' // Allow click-through if no BG
       });
       
-      this._applyConsoleWrappingToContainer(overlay, this.style.consoleWrapping);
+      this._updateBackgrounds('console', overlay, null); // Setup bg
 
       const logArea = document.createElement('div');
+      logArea.className = 'console-scroller';
       logArea.style.flex = '1';
-      logArea.style.overflowY = 'auto';
+      logArea.style.overflowY = 'auto'; // Default, modified by class
       logArea.style.WebkitOverflowScrolling = 'touch';
+      logArea.style.background = 'transparent';
+      logArea.style.pointerEvents = 'auto'; // Re-enable pointer
       
+      this._applyScrollbarVisibility(logArea, 'console');
       this._applyConsoleWrappingToContainer(logArea, this.style.consoleWrapping);
+      this._updateBackgrounds('console', overlay, logArea); // Apply bg logic
 
       logArea.addEventListener('scroll', () => {
         this._lastUserScroll = Date.now();
@@ -523,7 +605,7 @@
       }
 
       const suggestionBox = document.createElement('div');
-      suggestionBox.className = 'console-suggestions';
+      suggestionBox.className = 'console-suggestions console-scroller';
       suggestionBox.style.background = this.style.inputBG; 
       suggestionBox.style.color = this._firstColorFromRaw(this.style.inputTextRaw);
       
@@ -535,7 +617,6 @@
           suggestionBox.style.borderTopRightRadius = '0';
           suggestionBox.style.borderBottomLeftRadius = '4px';
           suggestionBox.style.borderBottomRightRadius = '4px';
-          suggestionBox.style.boxShadow = '0px 2px 10px rgba(0,0,0,0.3)';
       } else {
           suggestionBox.style.bottom = '100%';
           suggestionBox.style.top = 'auto';
@@ -544,37 +625,43 @@
           suggestionBox.style.borderBottomRightRadius = '0';
           suggestionBox.style.borderTopLeftRadius = '4px';
           suggestionBox.style.borderTopRightRadius = '4px';
-          suggestionBox.style.boxShadow = '0px -2px 10px rgba(0,0,0,0.3)';
       }
+      
+      // Auto-show suggestion scrollbar if needed
+      suggestionBox.classList.add('sb-show-y');
 
       overlay.appendChild(suggestionBox);
       this.suggestionBox = suggestionBox;
 
+      // WRAPPER
+      const inputWrapper = document.createElement('div');
+      inputWrapper.className = 'console-input-wrapper';
+      this._updateBackgrounds('input', inputWrapper, null); 
+
+      // HIGHLIGHT LAYER (Bottom)
+      const highlight = document.createElement('div');
+      highlight.className = 'console-input-highlight console-scroller'; // Must match scrolling of input
+      this._applyWrappingStyle(highlight, this.style.inputWrapping);
+      
+      // INPUT LAYER (Top)
       const input = document.createElement('textarea');
-      input.className = 'console-input';
+      input.className = 'console-input console-scroller';
       input.setAttribute('rows', '1'); 
       input.setAttribute('autocomplete', 'off'); 
       input.setAttribute('autocorrect', this._autocorrectEnabled ? 'on' : 'off'); 
       input.setAttribute('spellcheck', this._autocorrectEnabled ? 'true' : 'false'); 
       
-      Object.assign(input.style, {
-        width: '100%', border: 'none', outline: 'none', padding: '10px',
-        background: this.style.inputBG, 
-        color: this._firstColorFromRaw(this.style.inputTextRaw), 
-        fontFamily: this.style.fontInput, 
-        boxSizing: 'border-box',
-        resize: 'none', 
-        overflowY: 'auto',
-        verticalAlign: 'bottom', 
-        margin: '0', 
-        display: 'block',
-        lineHeight: '1.5' 
-      });
-      
       this._applyWrappingStyle(input, this.style.inputWrapping);
+      this._applyScrollbarVisibility(input, 'input');
+      // Apply same scrollbar visibility to highlight to keep box model identical
+      this._applyScrollbarVisibility(highlight, 'input'); 
 
       input.placeholder = this.style.inputPlaceholder != null ? this.style.inputPlaceholder : this._defaults.inputPlaceholder;
       this._updatePlaceholderCSS(this.style.inputPlaceholderColorRaw || this._defaults.inputPlaceholderColorRaw);
+
+      // Event listeners for Syncing
+      const syncScroll = () => { highlight.scrollTop = input.scrollTop; highlight.scrollLeft = input.scrollLeft; };
+      input.addEventListener('scroll', syncScroll);
 
       const updateSelection = () => {
           this._currentSelection = {
@@ -597,6 +684,7 @@
             const chosen = this._activeSuggestions[idx];
             input.value = chosen;
             this._inputCache = chosen;
+            this._updateInputSyntax();
             this._hideSuggestions();
             this._updateInputHeight(); 
           }
@@ -624,12 +712,12 @@
                 return;
             }
             if (behavior === 'newline') {
-                setTimeout(() => this._updateInputHeight(), 0);
+                setTimeout(() => { this._updateInputHeight(); this._updateInputSyntax(); syncScroll(); }, 0);
                 return;
             }
             if (behavior === 'submit') {
                 if (e.shiftKey) {
-                    setTimeout(() => this._updateInputHeight(), 0);
+                    setTimeout(() => { this._updateInputHeight(); this._updateInputSyntax(); syncScroll(); }, 0);
                     return;
                 }
                 e.preventDefault();
@@ -637,12 +725,14 @@
                     const chosen = this._activeSuggestions[this._suggestionIndex];
                     input.value = chosen;
                     this._inputCache = chosen;
+                    this._updateInputSyntax();
                     this._hideSuggestions();
                     this._updateInputHeight(); 
                 } else {
                     const txt = input.value;
                     input.value = '';
                     this._inputCache = '';
+                    this._updateInputSyntax();
                     this._hideSuggestions();
                     this._dispatchInput(txt);
                     this._updateInputHeight(); 
@@ -656,6 +746,8 @@
           updateSelection();
           this._updateSuggestions(input.value);
           this._updateInputHeight(); 
+          this._updateInputSyntax();
+          syncScroll();
       });
       input.addEventListener('blur', () => { 
         this._inputCache = input.value; 
@@ -668,18 +760,42 @@
           this._updateSuggestions(input.value); 
       });
 
-      overlay.appendChild(input);
+      inputWrapper.appendChild(highlight);
+      inputWrapper.appendChild(input);
+      overlay.appendChild(inputWrapper);
+      
       try { this.stage.appendChild(overlay); } catch (e) { document.body.appendChild(overlay); }
 
       this.inputOverlay = overlay;
       this.inputField = input;
-      this._applyInputBackground(this.style.inputBG);
+      this.inputHighlight = highlight;
+      this.inputWrapper = inputWrapper;
+
       this._applyInputTextColor(this.style.inputTextRaw);
       
       requestAnimationFrame(() => {
           this._resizeDynamicSizes();
           this._updateInputHeight();
       });
+    }
+
+    // ---- Syntax Highlighting For Input ----
+    _updateInputSyntax() {
+        if (!this.inputField || !this.inputHighlight) return;
+        const text = this.inputField.value;
+        this.inputHighlight.innerHTML = ''; 
+
+        if (this.style.textStyle === 'javascript') {
+            this._renderJavascriptSyntax(this.inputHighlight, text, this.style.fontInput);
+            if (text.endsWith('\n')) {
+                this.inputHighlight.appendChild(document.createTextNode('\u200B'));
+            }
+        } else {
+             this.inputHighlight.textContent = text;
+             if (text.endsWith('\n')) {
+                this.inputHighlight.appendChild(document.createTextNode('\u200B'));
+            }
+        }
     }
 
     // ---- Autofill Logic ----
@@ -722,13 +838,15 @@
                     this.inputField.value = cmd;
                     this._inputCache = cmd;
                     this.inputField.focus();
+                    this._updateInputSyntax();
                     this._hideSuggestions();
                     this._updateInputHeight();
                 }
             };
             this.suggestionBox.appendChild(div);
         });
-        this._applyInputBackground(this.style.inputBG);
+        
+        this._applyBackgroundStyle(this.suggestionBox, this.style.inputBG, null, 'scroll');
     }
 
     _navigateSuggestions(dir) {
@@ -787,39 +905,99 @@
 
     _firstColorFromRaw (raw) { try { return this._parseColorArg(raw).color || '#FFFFFF'; } catch (e) { return '#FFFFFF'; } }
 
-    _applyInputBackground (bgRaw) {
-      if (!this.inputField) return;
-      const parsed = this._parseColorArg(bgRaw);
-      const bgCSS = parsed.isGradient ? parsed.gradientCSS : (parsed.color || this._defaults.inputBG);
-      this.inputField.style.background = bgCSS;
-      if (this.suggestionBox) this.suggestionBox.style.background = bgCSS;
+    _updateBackgrounds (part, container, scroller) {
+        if (!container) return;
+        
+        let color, image, attachment;
+        
+        if (part === 'console') {
+            color = this.style.consoleBG;
+            image = this.style.consoleBgImage;
+            attachment = this.style.consoleBgAttachment;
+        } else {
+            color = this.style.inputBG;
+            image = this.style.inputBgImage;
+            attachment = this.style.inputBgAttachment;
+        }
+        
+        // Reset
+        container.style.background = 'transparent';
+        if (scroller) scroller.style.background = 'transparent';
+        
+        // Logic:
+        // Static: Apply to container. Scroller is transparent.
+        // Scrollable (local): Apply to scroller. Container is transparent.
+        
+        const target = (attachment === 'scrollable' && scroller) ? scroller : container;
+        
+        this._applyBackgroundStyle(target, color, image, attachment);
+    }
+
+    _applyBackgroundStyle (el, colorRaw, imageRaw, attachment) {
+      if (!el) return;
+      const parsed = this._parseColorArg(colorRaw);
+      const bgCSS = parsed.isGradient ? parsed.gradientCSS : (parsed.color || '#000000');
+      
+      el.style.background = bgCSS; 
+      
+      if (imageRaw) {
+          el.style.backgroundImage = `url("${imageRaw}")`;
+          el.style.backgroundSize = 'cover';
+          el.style.backgroundPosition = 'center';
+          el.style.backgroundRepeat = 'no-repeat';
+      }
+      
+      // 'local' = scrolls with content
+      // 'scroll' = fixed relative to border (static)
+      const val = (attachment === 'scrollable') ? 'local' : 'scroll';
+      el.style.backgroundAttachment = val;
     }
 
     _applyInputTextColor (rawColor) {
       if (!this.inputField) return;
-      const parsedText = this._parseColorArg(rawColor);
-      const parsedBg = this._parseColorArg(this.style.inputBG);
-      const bgLayer = parsedBg.isGradient ? parsedBg.gradientCSS : (parsedBg.color || this._defaults.inputBG);
       
-      const textColor = parsedText.color || '#FFFFFF';
-
-      if (parsedText.isGradient && parsedText.gradientCSS && this._supportsBackgroundClipText) {
-        this.inputField.style.background = `${parsedText.gradientCSS}, ${bgLayer}`;
-        this.inputField.style.backgroundRepeat = 'no-repeat, no-repeat';
-        this.inputField.style.backgroundSize = '100% 100%, 100% 100%';
-        try { this.inputField.style.webkitBackgroundClip = 'text, padding-box'; this.inputField.style.backgroundClip = 'text, padding-box'; } 
-        catch (e) { this.inputField.style.webkitBackgroundClip = 'text'; this.inputField.style.backgroundClip = 'text'; }
-        this.inputField.style.webkitTextFillColor = 'transparent';
-        this.inputField.style.color = 'transparent';
-      } else {
-        this.inputField.style.background = bgLayer;
-        this.inputField.style.backgroundRepeat = 'no-repeat';
-        this.inputField.style.backgroundSize = '100% 100%';
-        this.inputField.style.webkitBackgroundClip = '';
-        this.inputField.style.backgroundClip = '';
-        this.inputField.style.webkitTextFillColor = '';
-        this.inputField.style.color = textColor;
+      // Textarea itself must be transparent text so Highlight div shows through
+      this.inputField.style.color = 'transparent';
+      this.inputField.style.webkitTextFillColor = 'transparent';
+      
+      // If JS Style is active, we IGNORE the user color for the Highlighter
+      // Because highlighter will colorize keywords.
+      if (this.style.textStyle === 'javascript') {
+          // Caret needs to be visible. Default to white or hex match if possible.
+          this.inputField.style.caretColor = '#FFFFFF'; 
+          return;
       }
+
+      const parsedText = this._parseColorArg(rawColor);
+      const textColor = parsedText.color || '#FFFFFF';
+      this.inputField.style.caretColor = textColor;
+      
+      if (this.inputHighlight) {
+          if (parsedText.isGradient && parsedText.gradientCSS && this._supportsBackgroundClipText) {
+            this.inputHighlight.style.background = parsedText.gradientCSS;
+            this.inputHighlight.style.webkitBackgroundClip = 'text';
+            this.inputHighlight.style.backgroundClip = 'text';
+            this.inputHighlight.style.webkitTextFillColor = 'transparent';
+            this.inputHighlight.style.color = 'transparent';
+          } else {
+            this.inputHighlight.style.background = 'none';
+            this.inputHighlight.style.webkitBackgroundClip = '';
+            this.inputHighlight.style.backgroundClip = '';
+            this.inputHighlight.style.webkitTextFillColor = '';
+            this.inputHighlight.style.color = textColor;
+          }
+      }
+    }
+
+    _applyScrollbarVisibility(el, part) {
+        if (!el) return;
+        el.classList.remove('sb-show-x', 'sb-show-y');
+        
+        const x = (part === 'console') ? this.style.consoleScrollbarX : this.style.inputScrollbarX;
+        const y = (part === 'console') ? this.style.consoleScrollbarY : this.style.inputScrollbarY;
+        
+        if (x === 'show') el.classList.add('sb-show-x');
+        if (y === 'show') el.classList.add('sb-show-y');
     }
 
     _updatePlaceholderCSS (colorRaw) {
@@ -913,18 +1091,13 @@
         container.appendChild(img);
       } else {
         // --- TEXT RENDERING LOGIC ---
-        // If style is javascript, we use a special renderer
-        // If not, we check gradient mode
         if (this.style.textStyle === 'javascript') {
             this._renderJavascriptSyntax(container, entry.text, this.style.fontText);
         } else {
-            // Default / Normal
             const parsed = this._parseColorArg(entry.colorRaw || '#FFFFFF');
             if (this.style.gradientMode === 'split' && parsed.isGradient) {
-                // Split gradient per letter
                 this._renderSplitGradient(container, entry.text, parsed, this.style.fontText);
             } else {
-                // Standard rendering
                 const msgSpan = document.createElement('span');
                 msgSpan.textContent = entry.text;
                 msgSpan.style.fontFamily = this.style.fontText; 
@@ -942,9 +1115,7 @@
 
     // --- Helper: Javascript Syntax Highlighting ---
     _renderJavascriptSyntax(container, text, font) {
-        // Regex for simple tokens
-        // Strings, Keywords, Comments, Numbers, everything else
-        const tokenRegex = /(\/\/.*)|(".*?")|('.*?')|\b(const|let|var|if|else|function|return|true|false|null|undefined|class|new|this|await|async|try|catch)\b|(\b\d+\b)|([\s\S])/g;
+        const tokenRegex = /(\/\/.*)|(".*?")|('.*?')|(`.*?`)|(\b(const|let|var|if|else|function|return|true|false|null|undefined|class|new|this|await|async|try|catch|while|for|switch|case|break|continue)\b)|(\b\d+\b)|([\s\S])/g;
         
         let match;
         while ((match = tokenRegex.exec(text)) !== null) {
@@ -953,10 +1124,10 @@
             span.textContent = match[0];
             
             if (match[1]) span.className = 'console-syntax-comment';
-            else if (match[2] || match[3]) span.className = 'console-syntax-string';
-            else if (match[4]) span.className = 'console-syntax-keyword';
-            else if (match[5]) span.className = 'console-syntax-number';
-            else span.style.color = '#cccccc'; // Default color for code
+            else if (match[2] || match[3] || match[4]) span.className = 'console-syntax-string';
+            else if (match[5]) span.className = 'console-syntax-keyword';
+            else if (match[7]) span.className = 'console-syntax-number';
+            else span.style.color = 'inherit'; 
 
             container.appendChild(span);
         }
@@ -964,7 +1135,6 @@
 
     // --- Helper: Split Gradient per Letter ---
     _renderSplitGradient(container, text, parsedColor, font) {
-        // Simple RGB interpolation
         const getRGB = (c) => {
             const d = document.createElement('div');
             d.style.color = c;
@@ -989,9 +1159,7 @@
             if (len <= 1 || rgbStops.length <= 1) {
                 span.style.color = colors[0];
             } else {
-                // Calculate position t from 0 to 1
                 const t = i / (len - 1);
-                // Map t to segment index
                 const segmentCount = rgbStops.length - 1;
                 const segmentPos = t * segmentCount;
                 const index = Math.floor(segmentPos);
@@ -1013,8 +1181,6 @@
     _applyLineStyle (el, entry) {
       if (!el) return;
       el.style.textAlign = entry.customAlign ? entry.customAlign : this.style.textAlign;
-      // Because we may have multiple spans now, applying font to 2nd child is risky
-      // We apply logic based on structure
       const msgSpans = Array.from(el.children).filter(c => !c.classList.contains('console-timestamp'));
       if (entry.customFont) {
           msgSpans.forEach(s => s.style.fontFamily = entry.customFont);
@@ -1528,14 +1694,14 @@
 
       if (part.includes('console background')) {
         this.style.consoleBG = parsed.isGradient ? parsed.gradientCSS : parsed.color;
-        if (this.consoleOverlay) this.consoleOverlay.style.background = this.style.consoleBG;
+        if (this.consoleOverlay) this._updateBackgrounds('console', this.consoleOverlay, this.logArea);
       } else if (part.includes('input background')) {
         this.style.inputBG = parsed.isGradient ? parsed.gradientCSS : parsed.color;
-        if (this.inputField) this._applyInputBackground(this.style.inputBG);
-        if (this.inputField) this._applyInputTextColor(this.style.inputTextRaw);
+        if (this.inputWrapper) this._updateBackgrounds('input', this.inputWrapper, null);
+        if (this.suggestionBox) this._applyBackgroundStyle(this.suggestionBox, this.style.inputBG, null, 'scroll');
       } else if (part.includes('input text')) {
         this.style.inputTextRaw = colorArg || parsed.color;
-        if (this.inputField) this._applyInputTextColor(this.style.inputTextRaw);
+        this._applyInputTextColor(this.style.inputTextRaw);
       } else if (part.includes('timestamp text')) {
         this.style.timestampTextRaw = colorArg || parsed.color;
         if (this.logArea) {
@@ -1550,6 +1716,49 @@
         this._updatePlaceholderCSS(this.style.inputPlaceholderColorRaw || this._defaults.inputPlaceholderColorRaw);
       }
       this._resizeDynamicSizes();
+    }
+    
+    setBackgroundImage(args) {
+        const part = String(args.PART || 'console').toLowerCase();
+        const url = String(args.URL || '');
+        
+        if (part === 'console') {
+            this.style.consoleBgImage = url;
+            if (this.consoleOverlay) this._updateBackgrounds('console', this.consoleOverlay, this.logArea);
+        } else {
+            this.style.inputBgImage = url;
+            if (this.inputWrapper) this._updateBackgrounds('input', this.inputWrapper, null);
+        }
+    }
+    
+    setBackgroundAttachment(args) {
+        const part = String(args.PART || 'console').toLowerCase();
+        const mode = String(args.MODE || 'static').toLowerCase();
+        
+        if (part === 'console') {
+            this.style.consoleBgAttachment = mode;
+            if (this.consoleOverlay) this._updateBackgrounds('console', this.consoleOverlay, this.logArea);
+        } else {
+            this.style.inputBgAttachment = mode;
+            if (this.inputWrapper) this._updateBackgrounds('input', this.inputWrapper, null);
+        }
+    }
+    
+    setScrollbarVisibility(args) {
+        const part = String(args.PART || 'console').toLowerCase();
+        const axis = String(args.AXIS || 'vertical').toLowerCase();
+        const visibility = String(args.VISIBILITY || 'hide').toLowerCase();
+        
+        const keyBase = (part === 'console') ? 'consoleScrollbar' : 'inputScrollbar';
+        const keySuffix = (axis === 'horizontal') ? 'X' : 'Y';
+        this.style[`${keyBase}${keySuffix}`] = visibility;
+        
+        if (part === 'console') {
+            this._applyScrollbarVisibility(this.logArea, 'console');
+        } else {
+            this._applyScrollbarVisibility(this.inputField, 'input');
+            this._applyScrollbarVisibility(this.inputHighlight, 'input');
+        }
     }
 
     setFont (args) {
@@ -1575,7 +1784,7 @@
         }
       }
 
-      if (this.inputField && part === 'input') this.inputField.style.fontFamily = this.style.fontInput;
+      if (part === 'input') this._resizeDynamicSizes(); // Refreshes both field and highlight
       if (this.suggestionBox && part === 'input') this.suggestionBox.style.fontFamily = this.style.fontInput;
     }
 
@@ -1607,7 +1816,10 @@
         }
       }
 
-      if (this.inputField && part === 'input') this.inputField.style.textAlign = this.style.inputAlign;
+      if (this.inputField && part === 'input') {
+          this.inputField.style.textAlign = this.style.inputAlign;
+          if (this.inputHighlight) this.inputHighlight.style.textAlign = this.style.inputAlign;
+      }
     }
 
     setLineSpacing (args) {
@@ -1651,6 +1863,7 @@
         this.style.inputWrapping = mode;
         if (this.inputField) {
           this._applyWrappingStyle(this.inputField, mode);
+          if (this.inputHighlight) this._applyWrappingStyle(this.inputHighlight, mode);
           this._updateInputHeight(); 
         }
       }
@@ -1659,9 +1872,9 @@
     setTextStyle(args) {
         const style = String(args.STYLE || 'default').toLowerCase();
         this.style.textStyle = (style === 'javascript') ? 'javascript' : 'default';
-        // Note: We don't retroactively apply this to existing lines unless re-rendering happens.
-        // Users usually set style at start. If dynamic update is needed, we could call _restoreConsoleCache()
-        this._restoreConsoleCache();
+        this._restoreConsoleCache(); // For Console
+        this._updateInputSyntax(); // For Input
+        this._applyInputTextColor(this.style.inputTextRaw); // Refreshes color logic
     }
 
     setGradientMode(args) {
@@ -1680,10 +1893,10 @@
       this.setInputHeightRange({ MIN: this.style.minInputHeightPct, MAX: this.style.maxInputHeightPct });
       this.setTextWrapping({ PART: 'console', MODE: this.style.consoleWrapping });
       this.setTextWrapping({ PART: 'input', MODE: this.style.inputWrapping });
-      this._applyInputBackground(this.style.inputBG);
-      this._applyInputTextColor(this.style.inputTextRaw);
       this.setColorPicker({ PART: 'console background', COLOR: this.style.consoleBG });
+      this.setColorPicker({ PART: 'input background', COLOR: this.style.inputBG });
       this.setColorPicker({ PART: 'input placeholder', COLOR: this.style.inputPlaceholderColorRaw });
+      this.setColorPicker({ PART: 'input text', COLOR: this.style.inputTextRaw });
       
       this._autocorrectEnabled = false; 
       this.setAutocorrect({ ENABLED: false });
@@ -1691,6 +1904,14 @@
       this.setEnterBehavior({ BEHAVIOR: 'submit' });
       this.setTextStyle({ STYLE: 'default' });
       this.setGradientMode({ MODE: 'normal' });
+      this.setBackgroundImage({ PART: 'console', URL: '' });
+      this.setBackgroundImage({ PART: 'input', URL: '' });
+      this.setBackgroundAttachment({ PART: 'console', MODE: 'static' });
+      this.setBackgroundAttachment({ PART: 'input', MODE: 'static' });
+      this.setScrollbarVisibility({ PART: 'console', AXIS: 'vertical', VISIBILITY: 'hide' });
+      this.setScrollbarVisibility({ PART: 'console', AXIS: 'horizontal', VISIBILITY: 'hide' });
+      this.setScrollbarVisibility({ PART: 'input', AXIS: 'vertical', VISIBILITY: 'hide' });
+      this.setScrollbarVisibility({ PART: 'input', AXIS: 'horizontal', VISIBILITY: 'hide' });
 
       this._resizeDynamicSizes();
     }
@@ -1751,6 +1972,7 @@
         if (this.inputField) {
             this.inputField.value = this._inputCache;
             this.inputField.focus(); 
+            this._updateInputSyntax();
             this._updateInputHeight();
         }
         // Force resize to apply padding to console if needed
@@ -1767,6 +1989,8 @@
           this.inputOverlay.remove();
           this.inputOverlay = null;
           this.inputField = null;
+          this.inputHighlight = null;
+          this.inputWrapper = null;
           this.suggestionBox = null;
       }
       
@@ -1784,18 +2008,23 @@
     setInputText (args) {
       const v = String(args.DATA || '');
       this._inputCache = v;
-      if (this.inputField) this.inputField.value = v;
+      if (this.inputField) {
+          this.inputField.value = v;
+          this._updateInputSyntax();
+      }
       this._updateInputHeight();
     }
 
-    // FIXED: runInput handles empty string correctly now
     runInput (args) {
       this._dispatchInput(String(args.TEXT ?? ''));
     }
 
     clearInput () {
       this._inputCache = '';
-      if (this.inputField) this.inputField.value = '';
+      if (this.inputField) {
+          this.inputField.value = '';
+          this._updateInputSyntax();
+      }
       this._updateInputHeight();
     }
 
@@ -1820,12 +2049,10 @@
         const source = String(args.SOURCE || 'current').toLowerCase();
         const position = String(args.POSITION || 'start').toLowerCase();
 
-        // Check stored selection for last input, or current live selection
         let selectionObj = this._currentSelection;
         if (source === 'last') {
             selectionObj = this._lastSelection;
         } else if (this.inputField) {
-            // Update current if we can
             selectionObj = {
                 start: this.inputField.selectionStart || 0,
                 end: this.inputField.selectionEnd || 0
@@ -1855,12 +2082,10 @@
     }
 
     _dispatchInput (text) {
-      // Allow empty string to pass through (using ?? '')
       const txt = String(text ?? '');
       this.lastInput = txt;
       this._lastSelection = { ...this._currentSelection };
       
-      // Log only if text exists
       if (this.logInputEnabled && txt.trim()) this._log('> ' + txt.trim(), '#FFFFFF');
       
       this._inputEventId = (this._inputEventId || 0) + 1;
