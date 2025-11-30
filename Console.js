@@ -2,7 +2,7 @@
   'use strict';
 
   /**
-   * Console Extension v6.1 (Newline Support)
+   * Console Extension v6.2
    * * Features:
    * - Advanced Logging (Text, Gradients, Images)
    * - Individual Line Styling (Font, Size, Align overrides)
@@ -12,7 +12,7 @@
    * - Smart Image Scaling (0 width/height logic)
    * - Image Roundness (border-radius)
    * - Auto-spacing for images (Hidden in JSON)
-   * - Fixes: Line counting ignores spacing, Image autoscroll, Scrollbar hiding
+   * - Fixes: Input height reduced to single-line style, Placeholder text updated
    * - Update: Input is now a Textarea allowing Newlines (Shift+Enter)
    */
 
@@ -56,7 +56,7 @@
         inputBG: '#222222',
         inputTextRaw: '#FFFFFF',
         timestampTextRaw: '#FFFFFF',
-        inputPlaceholder: 'Type command... (Shift+Enter for new line)',
+        inputPlaceholder: 'Type command...', // Updated: Removed Shift+Enter text
         inputPlaceholderColorRaw: '#888888',
         fontText: 'Sans Serif',
         fontTimestamp: 'Sans Serif',
@@ -128,7 +128,8 @@
           { opcode: 'clearConsole', blockType: BlockType.COMMAND, text: 'clear console' },
           { opcode: 'logMessage', blockType: BlockType.COMMAND, text: 'log [TEXT] in color [COLOR]', arguments: { TEXT: { type: ArgumentType.STRING, defaultValue: 'Hello!' }, COLOR: { type: ArgumentType.COLOR, defaultValue: '#FFFFFF' } } },
           
-          { opcode: 'logImage', blockType: BlockType.COMMAND, text: 'log image [SRC] size [W] x [H] roundness [R]', arguments: { SRC: { type: ArgumentType.STRING, defaultValue: 'https://scv.scratch.mit.edu/da8ed626bf4c64df753823e590740662.svg' }, W: { type: ArgumentType.NUMBER, defaultValue: 0 }, H: { type: ArgumentType.NUMBER, defaultValue: 0 }, R: { type: ArgumentType.NUMBER, defaultValue: 4 } } },
+          // Updated Default URL to Dango
+          { opcode: 'logImage', blockType: BlockType.COMMAND, text: 'log image [SRC] size [W] x [H] roundness [R]', arguments: { SRC: { type: ArgumentType.STRING, defaultValue: 'https://em-content.zobj.net/source/microsoft-teams/337/dango_1f361.png' }, W: { type: ArgumentType.NUMBER, defaultValue: 0 }, H: { type: ArgumentType.NUMBER, defaultValue: 0 }, R: { type: ArgumentType.NUMBER, defaultValue: 4 } } },
           
           { opcode: 'logDots', blockType: BlockType.COMMAND, text: 'log dots' },
           
@@ -177,7 +178,8 @@
           { opcode: 'setAlignment', blockType: BlockType.COMMAND, text: 'set [PART] alignment to [ALIGN]', arguments: { PART: { type: ArgumentType.STRING, menu: 'alignmentParts', defaultValue: 'text' }, ALIGN: { type: ArgumentType.STRING, menu: 'alignmentMenu', defaultValue: 'left' } } },
 
           { opcode: 'setLineSpacing', blockType: BlockType.COMMAND, text: 'set line spacing to [SPACING]', arguments: { SPACING: { type: ArgumentType.NUMBER, defaultValue: 1.4 } } },
-          { opcode: 'setInputPlaceholder', blockType: BlockType.COMMAND, text: 'set input placeholder to [TEXT]', arguments: { TEXT: { type: ArgumentType.STRING, defaultValue: 'Type command... (Shift+Enter for new line)' } } },
+          // Updated Default Placeholder
+          { opcode: 'setInputPlaceholder', blockType: BlockType.COMMAND, text: 'set input placeholder to [TEXT]', arguments: { TEXT: { type: ArgumentType.STRING, defaultValue: 'Type command...' } } },
           { opcode: 'setTimestampFormat', blockType: BlockType.COMMAND, text: 'set timestamp format to [FORMAT]', arguments: { FORMAT: { type: ArgumentType.STRING, menu: 'timeFormat', defaultValue: 'off' } } },
           { opcode: 'resetStyling', blockType: BlockType.COMMAND, text: 'reset styling' }
         ],
@@ -357,9 +359,10 @@
         this.inputField.style.fontSize = `${this._computedInputPx}px`;
         this.inputField.style.fontFamily = this.style.fontInput;
         this.inputField.style.textAlign = this.style.inputAlign;
-        // Adjust fixed height relative to scale so it's not too small on big screens
+        
+        // FIX: Reduced fixed height to behave more like a single line input (plus padding)
         const estLineHeight = this._computedInputPx * 1.5;
-        this.inputField.style.height = `${Math.max(40, estLineHeight * 2.5)}px`; // Make room for ~2.5 lines
+        this.inputField.style.height = `${Math.max(38, estLineHeight + 24)}px`; // Just enough for 1 line + padding
       }
       if (this.suggestionBox) {
         this.suggestionBox.style.fontSize = `${this._computedInputPx}px`;
