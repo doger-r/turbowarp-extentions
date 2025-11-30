@@ -2,11 +2,11 @@
   'use strict';
 
   /**
-   * Console Extension v7.7 (User requested fixes)
+   * Console Extension v7.7 (Modified)
    * * Changes:
+   * - Removed Scrollbar blocks and logic.
    * - Added block to set console/input padding.
    * - Fixed console overlay padding to allow log area to be full-width.
-   * - Updated scrollbar CSS to ensure corner is transparent.
    * - Padding value now used in input height calculation.
    */
 
@@ -79,15 +79,9 @@
         textStyle: 'default',   
         gradientMode: 'normal',
         
-        // --- NEW: Padding defaults ---
+        // --- Padding defaults ---
         consolePadding: 10,
-        inputPadding: 10,
-
-        // Scrollbar props
-        consoleScrollbarX: 'hide',
-        consoleScrollbarY: 'hide',
-        inputScrollbarX: 'hide',
-        inputScrollbarY: 'hide'
+        inputPadding: 10
       };
       this.style = Object.assign({}, this._defaults);
 
@@ -127,11 +121,10 @@
         'setAutocorrect', 'getSelectionPosition', 'setInputPosition', 'setEnterBehavior',
         'addCommand', 'removeCommand', 'clearCommands',
         'setColorPicker','gradientReporter','gradient3Reporter','gradient4Reporter','setFont','setTextSizeMultiplier','setAlignment','setLineSpacing',
-        // --- NEW: Added setPadding ---
+        // --- setPadding ---
         'setPadding',
         'setInputPlaceholder','setInputHeightRange','setTextWrapping',
         'setTextStyle', 'setGradientMode', 
-        'setScrollbarVisibility',
         'resetStyling',
         'setScrollTo','getMaxScroll','getCurrentScroll','setAutoScroll','isAutoScroll'
       ];
@@ -179,8 +172,6 @@
           { opcode: 'setAutoScroll', blockType: BlockType.COMMAND, text: 'set autscroll to [ENABLED]', arguments: { ENABLED: { type: ArgumentType.BOOLEAN, defaultValue: true } } },
           { opcode: 'isAutoScroll', blockType: BlockType.BOOLEAN, text: 'is autoscroll on?' },
           
-          { opcode: 'setScrollbarVisibility', blockType: BlockType.COMMAND, text: 'set [PART] [AXIS] scrollbar to [VISIBILITY]', arguments: { PART: { type: ArgumentType.STRING, menu: 'wrappingParts', defaultValue: 'console' }, AXIS: { type: ArgumentType.STRING, menu: 'scrollAxis', defaultValue: 'vertical' }, VISIBILITY: { type: ArgumentType.STRING, menu: 'visibilityMenu', defaultValue: 'hide' } } },
-
           { blockType: BlockType.LABEL, text: 'Input & Autofill' },
           { opcode: 'toggleInput', blockType: BlockType.COMMAND, text: '[ACTION] input', arguments: { ACTION: { type: ArgumentType.STRING, menu: 'toggleMenu', defaultValue: 'show' } } },
           { opcode: 'setInputText', blockType: BlockType.COMMAND, text: 'set input to [DATA]', arguments: { DATA: { type: ArgumentType.STRING, defaultValue: '' } } },
@@ -223,7 +214,7 @@
 
           { opcode: 'setLineSpacing', blockType: BlockType.COMMAND, text: 'set line spacing to [SPACING]', arguments: { SPACING: { type: ArgumentType.NUMBER, defaultValue: 1.4 } } },
           
-          // --- NEW: setPadding block ---
+          // --- setPadding block ---
           { opcode: 'setPadding', blockType: BlockType.COMMAND, text: 'set [PART] padding to [PADDING] px', arguments: { PART: { type: ArgumentType.STRING, menu: 'wrappingParts', defaultValue: 'console' }, PADDING: { type: ArgumentType.NUMBER, defaultValue: 10 } } },
 
           { opcode: 'setInputPlaceholder', blockType: BlockType.COMMAND, text: 'set input placeholder to [TEXT]', arguments: { TEXT: { type: ArgumentType.STRING, defaultValue: 'Type command...' } } },
@@ -249,9 +240,7 @@
           inputSourceMenu: ['current', 'last'],
           selectionPositionMenu: ['start', 'end'],
           positionMenu: ['top', 'bottom'],
-          enterMenu: ['submit', 'newline', 'disabled'],
-          scrollAxis: ['horizontal', 'vertical'],
-          visibilityMenu: ['show', 'hide', 'toggle']
+          enterMenu: ['submit', 'newline', 'disabled']
         }
       };
     }
@@ -265,7 +254,7 @@
         .console-scroller::-webkit-scrollbar { display: none; }
         .console-scroller::-webkit-scrollbar-corner { background: transparent; }
 
-        /* SCROLLBAR VISIBILITY OVERRIDES */
+        /* SCROLLBAR VISIBILITY (Retained for Internal Suggestions Box) */
         .console-scroller.sb-show-y { 
             overflow-y: auto !important; 
             scrollbar-width: thin !important; 
@@ -288,7 +277,6 @@
             background: rgba(255,255,255,0.5); 
         }
         .console-scroller.sb-show-y::-webkit-scrollbar-corner { 
-            /* --- CHANGED: Ensure corner is transparent --- */
             background: transparent !important; 
         }
         
@@ -314,7 +302,6 @@
             background: rgba(255,255,255,0.5); 
         }
         .console-scroller.sb-show-x::-webkit-scrollbar-corner { 
-            /* --- CHANGED: Ensure corner is transparent --- */
             background: transparent !important; 
         }
 
@@ -331,7 +318,6 @@
           position: relative;
           display: block;
           margin: 0;
-          /* --- REMOVED: padding: 10px; --- */
           width: 100%;
           overflow: hidden; 
           background: transparent;
@@ -340,8 +326,6 @@
 
         .console-input-highlight {
           position: absolute;
-          /* --- REMOVED: top/left/right/bottom: 10px; --- */
-          /* --- ADDED: zero offsets, to be overridden by JS --- */
           top: 0; left: 0; right: 0; bottom: 0;
           z-index: 1;
           pointer-events: none; 
@@ -567,7 +551,7 @@
 
         const stageH = this.stage.clientHeight || 360;
         
-        // --- CHANGED: Use dynamic padding ---
+        // --- Use dynamic padding ---
         const wrapperPadding = this.style.inputPadding * 2;
         
         const desiredWrapperHeight = contentHeight + wrapperPadding; 
@@ -613,7 +597,6 @@
         top: '0', left: '0', right: '0', bottom: '0',
         display: 'flex', flexDirection: 'column',
         zIndex: '50', 
-        // --- CHANGED: Padding moved to logArea ---
         padding: '0',
         boxSizing: 'border-box',
         userSelect: this.textSelectable ? 'text' : 'none',
@@ -630,12 +613,11 @@
         WebkitOverflowScrolling: 'touch',
         background: 'transparent',
         pointerEvents: 'auto',
-        // --- NEW: Apply padding and box-sizing ---
+        // --- Apply padding and box-sizing ---
         padding: `${this.style.consolePadding}px`,
         boxSizing: 'border-box'
       });
       
-      this._applyScrollbarVisibility(logArea, 'console');
       this._applyConsoleWrappingToContainer(logArea, this.style.consoleWrapping);
       this._updateBackgrounds('console', overlay, logArea);
 
@@ -700,13 +682,13 @@
 
       const inputWrapper = document.createElement('div');
       inputWrapper.className = 'console-input-wrapper';
-      // --- NEW: Apply dynamic padding ---
+      // --- Apply dynamic padding ---
       inputWrapper.style.padding = `${this.style.inputPadding}px`;
       this._updateBackgrounds('input', inputWrapper, null); 
 
       const highlight = document.createElement('div');
       highlight.className = 'console-input-highlight console-scroller';
-      // --- NEW: Apply dynamic padding offsets ---
+      // --- Apply dynamic padding offsets ---
       const p = `${this.style.inputPadding}px`;
       highlight.style.top = p;
       highlight.style.left = p;
@@ -722,8 +704,6 @@
       input.setAttribute('spellcheck', this._autocorrectEnabled ? 'true' : 'false'); 
       
       this._applyWrappingStyle(input, this.style.inputWrapping);
-      this._applyScrollbarVisibility(input, 'input');
-      this._applyScrollbarVisibility(highlight, 'input'); 
 
       input.placeholder = this.style.inputPlaceholder != null ? this.style.inputPlaceholder : this._defaults.inputPlaceholder;
       this._updatePlaceholderCSS(this.style.inputPlaceholderColorRaw || this._defaults.inputPlaceholderColorRaw);
@@ -1075,17 +1055,6 @@
             this.inputHighlight.style.color = textColor;
           }
       }
-    }
-
-    _applyScrollbarVisibility(el, part) {
-        if (!el) return;
-        el.classList.remove('sb-show-x', 'sb-show-y');
-        
-        const x = (part === 'console') ? this.style.consoleScrollbarX : this.style.inputScrollbarX;
-        const y = (part === 'console') ? this.style.consoleScrollbarY : this.style.inputScrollbarY;
-        
-        if (x === 'show') el.classList.add('sb-show-x');
-        if (y === 'show') el.classList.add('sb-show-y');
     }
 
     _updatePlaceholderCSS (colorRaw) {
@@ -1827,30 +1796,6 @@
       this._resizeDynamicSizes();
     }
     
-    setScrollbarVisibility(args) {
-        const part = String(args.PART || 'console').toLowerCase();
-        const axis = String(args.AXIS || 'vertical').toLowerCase();
-        let visibility = String(args.VISIBILITY || 'hide').toLowerCase();
-        
-        const keyBase = (part === 'console') ? 'consoleScrollbar' : 'inputScrollbar';
-        const keySuffix = (axis === 'horizontal') ? 'X' : 'Y';
-        const styleKey = `${keyBase}${keySuffix}`;
-
-        if (visibility === 'toggle') {
-            const current = this.style[styleKey];
-            visibility = (current === 'show') ? 'hide' : 'show';
-        }
-        
-        this.style[styleKey] = visibility;
-        
-        if (part === 'console') {
-            this._applyScrollbarVisibility(this.logArea, 'console');
-        } else {
-            this._applyScrollbarVisibility(this.inputField, 'input');
-            this._applyScrollbarVisibility(this.inputHighlight, 'input');
-        }
-    }
-
     setFont (args) {
       const part = String(args.PART || 'text').toLowerCase();
       const font = String(args.FONT || 'Sans Serif');
@@ -1916,7 +1861,7 @@
       if (this.logArea) for (const ch of Array.from(this.logArea.children)) ch.style.lineHeight = String(this.style.lineSpacing);
     }
 
-    // --- NEW: setPadding function ---
+    // --- setPadding function ---
     setPadding(args) {
         const part = String(args.PART || 'console').toLowerCase();
         const padding = Math.max(0, Number(args.PADDING) || 0);
@@ -2004,7 +1949,7 @@
       this._timestampFormat = 'off';
       this._refreshTimestamps();
       this.setLineSpacing({ SPACING: this.style.lineSpacing });
-      // --- NEW: Reset padding ---
+      // --- Reset padding ---
       this.setPadding({ PART: 'console', PADDING: this._defaults.consolePadding });
       this.setPadding({ PART: 'input', PADDING: this._defaults.inputPadding });
       this.setInputPlaceholder({ TEXT: this.style.inputPlaceholder });
@@ -2023,11 +1968,6 @@
       this.setTextStyle({ STYLE: 'default' });
       this.setGradientMode({ MODE: 'normal' });
       
-      this.setScrollbarVisibility({ PART: 'console', AXIS: 'vertical', VISIBILITY: 'hide' });
-      this.setScrollbarVisibility({ PART: 'console', AXIS: 'horizontal', VISIBILITY: 'hide' });
-      this.setScrollbarVisibility({ PART: 'input', AXIS: 'vertical', VISIBILITY: 'hide' });
-      this.setScrollbarVisibility({ PART: 'input', AXIS: 'horizontal', VISIBILITY: 'hide' });
-
       this._resizeDynamicSizes();
     }
     
