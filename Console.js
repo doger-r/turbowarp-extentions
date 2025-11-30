@@ -2,18 +2,18 @@
   'use strict';
 
   /**
-   * Console Extension v6.2
-   * * Features:
-   * - Advanced Logging (Text, Gradients, Images)
-   * - Individual Line Styling (Font, Size, Align overrides)
-   * - Interactive Input with Minecraft-style Autofill
-   * - IntersectionObserver based rendering
-   * - Timestamps (Relative/Absolute)
-   * - Smart Image Scaling (0 width/height logic)
-   * - Image Roundness (border-radius)
-   * - Auto-spacing for images (Hidden in JSON)
-   * - Fixes: Input height reduced to single-line style, Placeholder text updated
-   * - Update: Input is now a Textarea allowing Newlines (Shift+Enter)
+   * Console Extension v6.4
+   * * Changes v6.4:
+   * - Default image updated to https://extensions.turbowarp.org/dango.png
+   * - Fixed input height calculation (now perfect 1-line fit).
+   * - Added "set [PART] text wrapping to [MODE]" block (Wrap vs Scroll).
+   * - Refined max height block validation.
+   * * Changes v6.3:
+   * - Default image is now TurboWarp Dango.
+   * - New block: "set input max height %".
+   * - Input auto-resizes based on content height up to max %.
+   * - Fixed input not touching bottom of scene.
+   * - Removed default browser scrollbar from input.
    */
 
   const BlockType = (Scratch && Scratch.BlockType) ? Scratch.BlockType : {
@@ -39,7 +39,6 @@
       this.stage = null;
 
       // data
-      // entries: { id, type, text?, src?, width?, height?, roundness?, spacingHeight?, isAutoSpacing?, colorRaw, ts, customFont?, customSize?, customAlign? }
       this._consoleCache = []; 
       this._nextId = 1;
       this._inputCache = '';
@@ -56,7 +55,7 @@
         inputBG: '#222222',
         inputTextRaw: '#FFFFFF',
         timestampTextRaw: '#FFFFFF',
-        inputPlaceholder: 'Type command...', // Updated: Removed Shift+Enter text
+        inputPlaceholder: 'Type command...',
         inputPlaceholderColorRaw: '#888888',
         fontText: 'Sans Serif',
         fontTimestamp: 'Sans Serif',
@@ -66,7 +65,10 @@
         sizeInput: 1,
         textAlign: 'left',
         inputAlign: 'left',
-        lineSpacing: 1.4
+        lineSpacing: 1.4,
+        maxInputHeightPct: 40, // Default max height 40% of stage
+        consoleWrapping: 'wrap', // 'wrap' or 'scroll'
+        inputWrapping: 'wrap'    // 'wrap' or 'scroll'
       };
       this.style = Object.assign({}, this._defaults);
 
@@ -104,7 +106,7 @@
         'setTimestampFormat','toggleInput','showInput','hideInput','setInputText','runInput','clearInput','setLogInput',
         'whenInput','getLastInput','getCurrentInput','isInputShown',
         'addCommand', 'removeCommand', 'clearCommands',
-        'setColorPicker','gradientReporter','gradient3Reporter','gradient4Reporter','setFont','setTextSizeMultiplier','setAlignment','setLineSpacing','setInputPlaceholder',
+        'setColorPicker','gradientReporter','gradient3Reporter','gradient4Reporter','setFont','setTextSizeMultiplier','setAlignment','setLineSpacing','setInputPlaceholder','setInputMaxHeight','setTextWrapping',
         'resetStyling','setConsoleScrollTo','consoleMaxScroll','consoleCurrentScroll','setAutoScroll','isAutoScroll'
       ];
       for (const m of methods) if (typeof this[m] === 'function') this[m] = this[m].bind(this);
@@ -128,8 +130,8 @@
           { opcode: 'clearConsole', blockType: BlockType.COMMAND, text: 'clear console' },
           { opcode: 'logMessage', blockType: BlockType.COMMAND, text: 'log [TEXT] in color [COLOR]', arguments: { TEXT: { type: ArgumentType.STRING, defaultValue: 'Hello!' }, COLOR: { type: ArgumentType.COLOR, defaultValue: '#FFFFFF' } } },
           
-          // Updated Default URL to Dango
-          { opcode: 'logImage', blockType: BlockType.COMMAND, text: 'log image [SRC] size [W] x [H] roundness [R]', arguments: { SRC: { type: ArgumentType.STRING, defaultValue: 'https://em-content.zobj.net/source/microsoft-teams/337/dango_1f361.png' }, W: { type: ArgumentType.NUMBER, defaultValue: 0 }, H: { type: ArgumentType.NUMBER, defaultValue: 0 }, R: { type: ArgumentType.NUMBER, defaultValue: 4 } } },
+          // Updated Default URL
+          { opcode: 'logImage', blockType: BlockType.COMMAND, text: 'log image [SRC] size [W] x [H] roundness [R]', arguments: { SRC: { type: ArgumentType.STRING, defaultValue: 'https://extensions.turbowarp.org/dango.png' }, W: { type: ArgumentType.NUMBER, defaultValue: 0 }, H: { type: ArgumentType.NUMBER, defaultValue: 0 }, R: { type: ArgumentType.NUMBER, defaultValue: 4 } } },
           
           { opcode: 'logDots', blockType: BlockType.COMMAND, text: 'log dots' },
           
@@ -176,10 +178,14 @@
           { opcode: 'setFont', blockType: BlockType.COMMAND, text: 'set [PART] font to [FONT]', arguments: { PART: { type: ArgumentType.STRING, menu: 'fontParts', defaultValue: 'text' }, FONT: { type: ArgumentType.STRING, defaultValue: 'Sans Serif' } } },
           { opcode: 'setTextSizeMultiplier', blockType: BlockType.COMMAND, text: 'set [PART] text size multiplier to [MULTIPLIER]', arguments: { PART: { type: ArgumentType.STRING, menu: 'sizeParts', defaultValue: 'text' }, MULTIPLIER: { type: ArgumentType.NUMBER, defaultValue: 1 } } },
           { opcode: 'setAlignment', blockType: BlockType.COMMAND, text: 'set [PART] alignment to [ALIGN]', arguments: { PART: { type: ArgumentType.STRING, menu: 'alignmentParts', defaultValue: 'text' }, ALIGN: { type: ArgumentType.STRING, menu: 'alignmentMenu', defaultValue: 'left' } } },
+          // New Wrapping Block
+          { opcode: 'setTextWrapping', blockType: BlockType.COMMAND, text: 'set [PART] text wrapping to [MODE]', arguments: { PART: { type: ArgumentType.STRING, menu: 'wrappingParts', defaultValue: 'console' }, MODE: { type: ArgumentType.STRING, menu: 'wrappingMode', defaultValue: 'wrap' } } },
 
           { opcode: 'setLineSpacing', blockType: BlockType.COMMAND, text: 'set line spacing to [SPACING]', arguments: { SPACING: { type: ArgumentType.NUMBER, defaultValue: 1.4 } } },
-          // Updated Default Placeholder
+          
           { opcode: 'setInputPlaceholder', blockType: BlockType.COMMAND, text: 'set input placeholder to [TEXT]', arguments: { TEXT: { type: ArgumentType.STRING, defaultValue: 'Type command...' } } },
+          { opcode: 'setInputMaxHeight', blockType: BlockType.COMMAND, text: 'set input max height % to [PERCENT]', arguments: { PERCENT: { type: ArgumentType.NUMBER, defaultValue: 40 } } },
+
           { opcode: 'setTimestampFormat', blockType: BlockType.COMMAND, text: 'set timestamp format to [FORMAT]', arguments: { FORMAT: { type: ArgumentType.STRING, menu: 'timeFormat', defaultValue: 'off' } } },
           { opcode: 'resetStyling', blockType: BlockType.COMMAND, text: 'reset styling' }
         ],
@@ -190,7 +196,9 @@
           fontParts: ['text', 'timestamp', 'input'],
           sizeParts: ['text', 'timestamp', 'input'],
           alignmentParts: ['text', 'input'],
-          alignmentMenu: ['left', 'center', 'right']
+          alignmentMenu: ['left', 'center', 'right'],
+          wrappingParts: ['console', 'input'],
+          wrappingMode: ['wrap', 'scroll']
         }
       };
     }
@@ -202,7 +210,10 @@
         .consoleOverlay, .consoleOverlay * { scrollbar-width: none; -ms-overflow-style: none; }
         .consoleOverlay::-webkit-scrollbar, .consoleOverlay *::-webkit-scrollbar { display: none; }
         /* console-line is used for text/image/dots, console-spacing is for spacing block */
-        .console-line { white-space: pre-wrap; word-break: break-word; display: block; }
+        .console-line { 
+          display: block; 
+          /* wrapping handled via inline style now based on state */
+        }
         .console-spacing { width: 100%; display: block; } 
 
         .console-input { 
@@ -212,8 +223,15 @@
           background-repeat: no-repeat;
           resize: none !important;
           overflow-y: auto; 
-          white-space: pre-wrap; 
+          /* wrapping handled via inline style now based on state */
+          display: block; /* Ensure no inline gap */
+          margin: 0; /* Flush to container */
+          scrollbar-width: none; /* Firefox: hide scrollbar */
+          -ms-overflow-style: none; /* IE/Edge */
         }
+        /* Chrome/Safari: hide scrollbar */
+        .console-input::-webkit-scrollbar { display: none; }
+
         .console-input::placeholder { color: var(--console-input-placeholder-color, ${this._defaults.inputPlaceholderColorRaw}) !important; opacity: 1 !important; }
         .console-line span { vertical-align: middle; }
         .console-img { vertical-align: middle; max-width: 100%; } /* border-radius applied inline */
@@ -359,10 +377,11 @@
         this.inputField.style.fontSize = `${this._computedInputPx}px`;
         this.inputField.style.fontFamily = this.style.fontInput;
         this.inputField.style.textAlign = this.style.inputAlign;
+        // Fix for "2-line" issue: Set explicit line-height for calculation
+        this.inputField.style.lineHeight = '1.5';
         
-        // FIX: Reduced fixed height to behave more like a single line input (plus padding)
-        const estLineHeight = this._computedInputPx * 1.5;
-        this.inputField.style.height = `${Math.max(38, estLineHeight + 24)}px`; // Just enough for 1 line + padding
+        // Auto-resize logic based on max height percentage
+        this._updateInputHeight();
       }
       if (this.suggestionBox) {
         this.suggestionBox.style.fontSize = `${this._computedInputPx}px`;
@@ -370,11 +389,40 @@
       }
 
       if (this.consoleOverlay && this.inputField && this.inputVisible) {
-        const inputHt = this.inputField.getBoundingClientRect().height || (this._computedInputPx + 36);
+        const inputHt = this.inputField.offsetHeight || (this._computedInputPx + 36);
         this.consoleOverlay.style.paddingBottom = `${inputHt}px`;
       } else if (this.consoleOverlay) {
         this.consoleOverlay.style.paddingBottom = '';
       }
+    }
+
+    // Helper to calculate auto-height for input
+    _updateInputHeight() {
+        if (!this.inputField || !this.stage) return;
+        
+        // Reset height to auto to get the correct scrollHeight
+        this.inputField.style.height = 'auto';
+        
+        const stageH = this.stage.clientHeight || 360;
+        const maxPct = this.style.maxInputHeightPct || 40; 
+        const maxHeightPx = stageH * (maxPct / 100);
+        
+        // Exact 1-line height: fontSize * line-height + vertical padding
+        // fontSize = _computedInputPx, lineHeight = 1.5, padding = 10 top + 10 bottom = 20
+        const oneLineHeight = (this._computedInputPx * 1.5) + 20; 
+
+        // Current content height (scrollHeight includes padding in most box-sizing models with height: auto)
+        const contentHeight = this.inputField.scrollHeight;
+
+        // Apply clamping: At least 1 line, at most Max%
+        const finalHeight = Math.min(Math.max(oneLineHeight, contentHeight), maxHeightPx);
+        
+        this.inputField.style.height = `${finalHeight}px`;
+
+        // Update console padding to match input height so text doesn't hide behind input
+        if (this.consoleOverlay && this.inputVisible) {
+            this.consoleOverlay.style.paddingBottom = `${finalHeight}px`;
+        }
     }
 
     // ---- create/destroy console & input ----
@@ -417,7 +465,13 @@
       if (this.inputOverlay && this.stage.contains(this.inputOverlay)) return;
 
       const overlay = document.createElement('div');
-      Object.assign(overlay.style, { position: 'absolute', left: '0', right: '0', bottom: '0', zIndex: '60', boxSizing: 'border-box' });
+      // Ensure bottom: 0 is respected and container handles layout
+      Object.assign(overlay.style, { 
+          position: 'absolute', left: '0', right: '0', bottom: '0', 
+          zIndex: '60', 
+          boxSizing: 'border-box',
+          display: 'block' 
+      });
 
       // -- Suggestion Box (Autofill) --
       const suggestionBox = document.createElement('div');
@@ -436,9 +490,15 @@
         color: this._firstColorFromRaw(this.style.inputTextRaw), 
         fontFamily: this.style.fontInput, 
         boxSizing: 'border-box',
-        resize: 'none', // Prevent manual resizing, we control dimensions
-        overflowY: 'auto'
+        resize: 'none', 
+        overflowY: 'auto',
+        verticalAlign: 'bottom', // Ensures no descent gap
+        margin: '0', // Ensures touching edges
+        display: 'block',
+        lineHeight: '1.5' // Explicit line height for height calcs
       });
+      
+      this._applyWrappingStyle(input, this.style.inputWrapping);
 
       input.placeholder = this.style.inputPlaceholder != null ? this.style.inputPlaceholder : this._defaults.inputPlaceholder;
       this._updatePlaceholderCSS(this.style.inputPlaceholderColorRaw || this._defaults.inputPlaceholderColorRaw);
@@ -452,6 +512,7 @@
             input.value = chosen;
             this._inputCache = chosen;
             this._hideSuggestions();
+            this._updateInputHeight(); // Resize on fill
           }
           return;
         }
@@ -473,6 +534,8 @@
             // CHANGED: Allow Shift+Enter for newlines
             if (e.shiftKey) {
                 // Allow default behavior (insert newline)
+                // Schedule resize after DOM update
+                setTimeout(() => this._updateInputHeight(), 0);
                 return;
             }
 
@@ -483,12 +546,14 @@
                 input.value = chosen;
                 this._inputCache = chosen;
                 this._hideSuggestions();
+                this._updateInputHeight(); // Resize
             } else {
                 const txt = input.value;
                 input.value = '';
                 this._inputCache = '';
                 this._hideSuggestions();
                 this._dispatchInput(txt, true);
+                this._updateInputHeight(); // Reset size
             }
         }
       });
@@ -496,6 +561,7 @@
       input.addEventListener('input', () => { 
           this._inputCache = input.value; 
           this._updateSuggestions(input.value);
+          this._updateInputHeight(); // Auto-resize on typing
       });
       input.addEventListener('blur', () => { 
         this._inputCache = input.value; 
@@ -556,6 +622,7 @@
                     this._inputCache = cmd;
                     this.inputField.focus();
                     this._hideSuggestions();
+                    this._updateInputHeight();
                 }
             };
             this.suggestionBox.appendChild(div);
@@ -686,6 +753,7 @@
       const container = document.createElement('div');
       container.className = 'console-line';
       container.style.lineHeight = String(this.style.lineSpacing || this._defaults.lineSpacing);
+      this._applyWrappingStyle(container, this.style.consoleWrapping);
       
       // Initial dataset population
       container.dataset.id = String(entry.id);
@@ -778,6 +846,21 @@
             el.dataset.sizeMult = String(entry.customSize);
         } else {
             delete el.dataset.sizeMult;
+        }
+    }
+    
+    // Helper for Wrapping vs Scrolling
+    _applyWrappingStyle (el, mode) {
+        if (!el) return;
+        if (mode === 'scroll') {
+            el.style.whiteSpace = 'pre';
+            el.style.overflowX = 'auto';
+            el.style.wordBreak = 'normal';
+        } else {
+            // 'wrap'
+            el.style.whiteSpace = 'pre-wrap';
+            el.style.overflowX = 'hidden';
+            el.style.wordBreak = 'break-word';
         }
     }
 
@@ -1273,6 +1356,34 @@
       if (this.inputField) this.inputField.placeholder = this.style.inputPlaceholder;
     }
 
+    setInputMaxHeight (args) {
+        // Enforce a sensible minimum (10%) to prevent input from disappearing
+        this.style.maxInputHeightPct = Math.max(10, Math.min(100, Number(args.PERCENT) || 40));
+        this._updateInputHeight();
+    }
+    
+    // NEW BLOCK: Set Text Wrapping
+    setTextWrapping (args) {
+        const part = String(args.PART || 'console').toLowerCase();
+        const mode = String(args.MODE || 'wrap').toLowerCase() === 'scroll' ? 'scroll' : 'wrap';
+
+        if (part === 'console') {
+            this.style.consoleWrapping = mode;
+            if (this.logArea) {
+                for (const line of Array.from(this.logArea.children)) {
+                    if (line.classList.contains('console-line')) {
+                        this._applyWrappingStyle(line, mode);
+                    }
+                }
+            }
+        } else if (part === 'input') {
+            this.style.inputWrapping = mode;
+            if (this.inputField) {
+                this._applyWrappingStyle(this.inputField, mode);
+            }
+        }
+    }
+
     resetStyling () {
       this.style = Object.assign({}, this._defaults);
       this.lineSpacing = this._defaults.lineSpacing;
@@ -1284,13 +1395,23 @@
         this.inputField.style.textAlign = this.style.inputAlign;
         this._applyInputTextColor(this.style.inputTextRaw);
         this._updatePlaceholderCSS(this.style.inputPlaceholderColorRaw || this._defaults.inputPlaceholderColorRaw);
+        this._applyWrappingStyle(this.inputField, this.style.inputWrapping);
+        this._updateInputHeight();
         void this.inputField.offsetHeight;
       }
       if (this.suggestionBox) {
           this.suggestionBox.style.background = this.style.inputBG;
           this.suggestionBox.style.color = this._firstColorFromRaw(this.style.inputTextRaw);
       }
-      if (this.logArea) this._restoreConsoleCache();
+      if (this.logArea) {
+          // Re-apply console wrapping global preference
+           for (const line of Array.from(this.logArea.children)) {
+               if (line.classList.contains('console-line')) {
+                   this._applyWrappingStyle(line, this.style.consoleWrapping);
+               }
+           }
+          this._restoreConsoleCache();
+      }
     }
     
     // ---- scroll ----
@@ -1326,9 +1447,9 @@
     toggleInput (args) { const act = String(args.ACTION || 'toggle').toLowerCase(); let priorAtBottom = false; try { priorAtBottom = this.logArea ? ((this.logArea.scrollTop + this.logArea.clientHeight) >= (this.logArea.scrollHeight - 5)) : true; } catch (e) { priorAtBottom = false; } if (act === 'show') this.showInput(priorAtBottom); else if (act === 'hide') this.hideInput(priorAtBottom); else { if (this.inputVisible) this.hideInput(priorAtBottom); else this.showInput(priorAtBottom); } }
     showInput (priorAtBottom = false) { this.inputVisible = true; this._ensureUI(); if (!this.inputOverlay) this._createInput(); if (this.inputOverlay) this.inputOverlay.style.display = 'block'; this._resizeDynamicSizes(); if (this.logArea && priorAtBottom) this._instantScrollToBottom(); }
     hideInput (priorAtBottom = false) { try { priorAtBottom = (typeof priorAtBottom === 'boolean') ? priorAtBottom : (this.logArea ? ((this.logArea.scrollTop + this.logArea.clientHeight) >= (this.logArea.scrollHeight - 5)) : false); } catch (e) { priorAtBottom = false; } if (this.inputOverlay) this.inputOverlay.style.display = 'none'; this.inputVisible = false; this._hideSuggestions(); if (this.logArea && priorAtBottom) this._instantScrollToBottom(); }
-    setInputText (args) { const v = String(args.DATA || ''); this._inputCache = v; if (this.inputField) this.inputField.value = v; }
+    setInputText (args) { const v = String(args.DATA || ''); this._inputCache = v; if (this.inputField) this.inputField.value = v; this._updateInputHeight(); }
     runInput (args) { this._dispatchInput(String(args.TEXT || ''), false); }
-    clearInput () { this._inputCache = ''; if (this.inputField) this.inputField.value = ''; }
+    clearInput () { this._inputCache = ''; if (this.inputField) this.inputField.value = ''; this._updateInputHeight(); }
     setLogInput (args) { this.logInputEnabled = !!args.ENABLED; }
     getLastInput () { return this.lastInput || ''; }
     getCurrentInput () { return (this.inputField ? this.inputField.value : this._inputCache) || ''; }
