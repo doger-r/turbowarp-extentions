@@ -2,18 +2,14 @@
   'use strict';
 
   /**
-   * Console Extension v6.4
+   * Console Extension v6.5
+   * * Changes v6.5:
+   * - Fixed input height logic to prevent empty space (uses rows="1" + shrink-to-fit).
+   * - Changed 'Scroll' mode to scroll the entire console container horizontally (unified X).
+   * - Fixed text size multiplier ignoring values that resulted in <10px font size.
    * * Changes v6.4:
    * - Default image updated to https://extensions.turbowarp.org/dango.png
-   * - Fixed input height calculation (now perfect 1-line fit).
-   * - Added "set [PART] text wrapping to [MODE]" block (Wrap vs Scroll).
-   * - Refined max height block validation.
-   * * Changes v6.3:
-   * - Default image is now TurboWarp Dango.
-   * - New block: "set input max height %".
-   * - Input auto-resizes based on content height up to max %.
-   * - Fixed input not touching bottom of scene.
-   * - Removed default browser scrollbar from input.
+   * - Added "set [PART] text wrapping to [MODE]" block.
    */
 
   const BlockType = (Scratch && Scratch.BlockType) ? Scratch.BlockType : {
@@ -66,7 +62,7 @@
         textAlign: 'left',
         inputAlign: 'left',
         lineSpacing: 1.4,
-        maxInputHeightPct: 40, // Default max height 40% of stage
+        maxInputHeightPct: 40, 
         consoleWrapping: 'wrap', // 'wrap' or 'scroll'
         inputWrapping: 'wrap'    // 'wrap' or 'scroll'
       };
@@ -130,7 +126,6 @@
           { opcode: 'clearConsole', blockType: BlockType.COMMAND, text: 'clear console' },
           { opcode: 'logMessage', blockType: BlockType.COMMAND, text: 'log [TEXT] in color [COLOR]', arguments: { TEXT: { type: ArgumentType.STRING, defaultValue: 'Hello!' }, COLOR: { type: ArgumentType.COLOR, defaultValue: '#FFFFFF' } } },
           
-          // Updated Default URL
           { opcode: 'logImage', blockType: BlockType.COMMAND, text: 'log image [SRC] size [W] x [H] roundness [R]', arguments: { SRC: { type: ArgumentType.STRING, defaultValue: 'https://extensions.turbowarp.org/dango.png' }, W: { type: ArgumentType.NUMBER, defaultValue: 0 }, H: { type: ArgumentType.NUMBER, defaultValue: 0 }, R: { type: ArgumentType.NUMBER, defaultValue: 4 } } },
           
           { opcode: 'logDots', blockType: BlockType.COMMAND, text: 'log dots' },
@@ -178,7 +173,6 @@
           { opcode: 'setFont', blockType: BlockType.COMMAND, text: 'set [PART] font to [FONT]', arguments: { PART: { type: ArgumentType.STRING, menu: 'fontParts', defaultValue: 'text' }, FONT: { type: ArgumentType.STRING, defaultValue: 'Sans Serif' } } },
           { opcode: 'setTextSizeMultiplier', blockType: BlockType.COMMAND, text: 'set [PART] text size multiplier to [MULTIPLIER]', arguments: { PART: { type: ArgumentType.STRING, menu: 'sizeParts', defaultValue: 'text' }, MULTIPLIER: { type: ArgumentType.NUMBER, defaultValue: 1 } } },
           { opcode: 'setAlignment', blockType: BlockType.COMMAND, text: 'set [PART] alignment to [ALIGN]', arguments: { PART: { type: ArgumentType.STRING, menu: 'alignmentParts', defaultValue: 'text' }, ALIGN: { type: ArgumentType.STRING, menu: 'alignmentMenu', defaultValue: 'left' } } },
-          // New Wrapping Block
           { opcode: 'setTextWrapping', blockType: BlockType.COMMAND, text: 'set [PART] text wrapping to [MODE]', arguments: { PART: { type: ArgumentType.STRING, menu: 'wrappingParts', defaultValue: 'console' }, MODE: { type: ArgumentType.STRING, menu: 'wrappingMode', defaultValue: 'wrap' } } },
 
           { opcode: 'setLineSpacing', blockType: BlockType.COMMAND, text: 'set line spacing to [SPACING]', arguments: { SPACING: { type: ArgumentType.NUMBER, defaultValue: 1.4 } } },
@@ -209,10 +203,12 @@
       style.textContent = `
         .consoleOverlay, .consoleOverlay * { scrollbar-width: none; -ms-overflow-style: none; }
         .consoleOverlay::-webkit-scrollbar, .consoleOverlay *::-webkit-scrollbar { display: none; }
-        /* console-line is used for text/image/dots, console-spacing is for spacing block */
+        
         .console-line { 
           display: block; 
-          /* wrapping handled via inline style now based on state */
+          /* wrapping now handled by container settings or inline styles */
+          width: fit-content; /* allows expansion for scrolling */
+          min-width: 100%;
         }
         .console-spacing { width: 100%; display: block; } 
 
@@ -223,18 +219,16 @@
           background-repeat: no-repeat;
           resize: none !important;
           overflow-y: auto; 
-          /* wrapping handled via inline style now based on state */
-          display: block; /* Ensure no inline gap */
-          margin: 0; /* Flush to container */
-          scrollbar-width: none; /* Firefox: hide scrollbar */
-          -ms-overflow-style: none; /* IE/Edge */
+          display: block; 
+          margin: 0; 
+          scrollbar-width: none; 
+          -ms-overflow-style: none; 
         }
-        /* Chrome/Safari: hide scrollbar */
         .console-input::-webkit-scrollbar { display: none; }
 
         .console-input::placeholder { color: var(--console-input-placeholder-color, ${this._defaults.inputPlaceholderColorRaw}) !important; opacity: 1 !important; }
         .console-line span { vertical-align: middle; }
-        .console-img { vertical-align: middle; max-width: 100%; } /* border-radius applied inline */
+        .console-img { vertical-align: middle; max-width: 100%; } 
         
         /* Suggestion Box Styles */
         .console-suggestions {
@@ -248,8 +242,6 @@
           box-shadow: 0px -2px 10px rgba(0,0,0,0.3);
           border-top-left-radius: 4px;
           border-top-right-radius: 4px;
-          
-          /* Hide Scrollbar */
           scrollbar-width: none; 
           -ms-overflow-style: none;
         }
@@ -353,8 +345,9 @@
       const base = 14;
 
       // Base Globals
-      this._computedTsPx = Math.max(10, base * scale * (this.style.sizeTimestamp || 1));
-      this._computedInputPx = Math.max(10, base * scale * (this.style.sizeInput || 1));
+      // FIX: Changed min clamp from 10 to 1 to allow small text multipliers
+      this._computedTsPx = Math.max(1, base * scale * (this.style.sizeTimestamp || 1));
+      this._computedInputPx = Math.max(1, base * scale * (this.style.sizeInput || 1));
 
       // Resize all lines in logArea
       if (this.logArea) {
@@ -363,7 +356,8 @@
           
           // Check for line-specific multiplier override
           const lineMult = line.dataset.sizeMult ? Number(line.dataset.sizeMult) : (this.style.sizeText || 1);
-          const linePx = Math.max(10, base * scale * lineMult);
+          // FIX: Changed min clamp from 10 to 1
+          const linePx = Math.max(1, base * scale * lineMult);
 
           const spans = line.querySelectorAll('span');
           // spans[0] is timestamp, spans[1] is text content
@@ -377,7 +371,6 @@
         this.inputField.style.fontSize = `${this._computedInputPx}px`;
         this.inputField.style.fontFamily = this.style.fontInput;
         this.inputField.style.textAlign = this.style.inputAlign;
-        // Fix for "2-line" issue: Set explicit line-height for calculation
         this.inputField.style.lineHeight = '1.5';
         
         // Auto-resize logic based on max height percentage
@@ -400,22 +393,20 @@
     _updateInputHeight() {
         if (!this.inputField || !this.stage) return;
         
-        // Reset height to auto to get the correct scrollHeight
-        this.inputField.style.height = 'auto';
+        // FIX: Set height to 'auto' or 1px first to force a shrink-to-fit recalculation
+        // This ensures scrollHeight accurately reflects the content, even when shrinking from a larger size.
+        this.inputField.style.height = '1px';
         
         const stageH = this.stage.clientHeight || 360;
         const maxPct = this.style.maxInputHeightPct || 40; 
         const maxHeightPx = stageH * (maxPct / 100);
         
-        // Exact 1-line height: fontSize * line-height + vertical padding
-        // fontSize = _computedInputPx, lineHeight = 1.5, padding = 10 top + 10 bottom = 20
-        const oneLineHeight = (this._computedInputPx * 1.5) + 20; 
-
-        // Current content height (scrollHeight includes padding in most box-sizing models with height: auto)
+        // Calculate the height of content
         const contentHeight = this.inputField.scrollHeight;
 
-        // Apply clamping: At least 1 line, at most Max%
-        const finalHeight = Math.min(Math.max(oneLineHeight, contentHeight), maxHeightPx);
+        // Apply clamping: At most Max%
+        // We do NOT clamp to min-height of 1 line here because scrollHeight on rows="1" handles that naturally
+        const finalHeight = Math.min(contentHeight, maxHeightPx);
         
         this.inputField.style.height = `${finalHeight}px`;
 
@@ -441,11 +432,20 @@
         boxSizing: 'border-box',
         userSelect: this.textSelectable ? 'text' : 'none'
       });
+      
+      // Initial Wrapping Style for Container
+      this._applyConsoleWrappingToContainer(overlay, this.style.consoleWrapping);
 
       const logArea = document.createElement('div');
       logArea.style.flex = '1';
+      // If wrapping is 'scroll', we let the parent overlay handle scrolling X, but logArea needs to allow expansion
+      // Actually, logArea *is* the scrolling container for Y. 
+      // For unified X scrolling, logArea should probably be the one handling overflow-x too.
       logArea.style.overflowY = 'auto';
       logArea.style.WebkitOverflowScrolling = 'touch';
+      
+      this._applyConsoleWrappingToContainer(logArea, this.style.consoleWrapping);
+
       logArea.addEventListener('scroll', () => {
         this._lastUserScroll = Date.now();
         try { this._scrollCache = this.logArea ? this.logArea.scrollTop : this._scrollCache; } catch (e) {}
@@ -484,6 +484,7 @@
       // CHANGED: Use textarea for multiline support
       const input = document.createElement('textarea');
       input.className = 'console-input';
+      input.setAttribute('rows', '1'); // FIX: Start with 1 row explicitly
       Object.assign(input.style, {
         width: '100%', border: 'none', outline: 'none', padding: '10px',
         background: this.style.inputBG, 
@@ -753,7 +754,16 @@
       const container = document.createElement('div');
       container.className = 'console-line';
       container.style.lineHeight = String(this.style.lineSpacing || this._defaults.lineSpacing);
-      this._applyWrappingStyle(container, this.style.consoleWrapping);
+      
+      // Inline styles for lines now depend on container setting mostly, but
+      // if wrapping is 'scroll', we force lines to fit content so they expand container
+      if (this.style.consoleWrapping === 'scroll') {
+          container.style.whiteSpace = 'pre';
+          container.style.wordBreak = 'normal';
+      } else {
+          container.style.whiteSpace = 'pre-wrap';
+          container.style.wordBreak = 'break-word';
+      }
       
       // Initial dataset population
       container.dataset.id = String(entry.id);
@@ -849,7 +859,7 @@
         }
     }
     
-    // Helper for Wrapping vs Scrolling
+    // Helper for Input Wrapping vs Scrolling
     _applyWrappingStyle (el, mode) {
         if (!el) return;
         if (mode === 'scroll') {
@@ -861,6 +871,19 @@
             el.style.whiteSpace = 'pre-wrap';
             el.style.overflowX = 'hidden';
             el.style.wordBreak = 'break-word';
+        }
+    }
+
+    // FIX: New helper for Console container wrapping
+    _applyConsoleWrappingToContainer (el, mode) {
+        if (!el) return;
+        if (mode === 'scroll') {
+            // Unified X scrolling: parent (el) handles overflow-x
+            el.style.overflowX = 'auto';
+            // Children will need to be forced to not wrap
+        } else {
+            // Wrap: parent hides overflow-x, children wrap
+            el.style.overflowX = 'hidden';
         }
     }
 
@@ -1370,9 +1393,18 @@
         if (part === 'console') {
             this.style.consoleWrapping = mode;
             if (this.logArea) {
+                // FIX: Apply wrapping to container for unified X scroll
+                this._applyConsoleWrappingToContainer(this.logArea, mode);
                 for (const line of Array.from(this.logArea.children)) {
                     if (line.classList.contains('console-line')) {
-                        this._applyWrappingStyle(line, mode);
+                        // Lines must be 'pre' to overflow horizontally
+                        if (mode === 'scroll') {
+                            line.style.whiteSpace = 'pre';
+                            line.style.wordBreak = 'normal';
+                        } else {
+                            line.style.whiteSpace = 'pre-wrap';
+                            line.style.wordBreak = 'break-word';
+                        }
                     }
                 }
             }
@@ -1405,9 +1437,17 @@
       }
       if (this.logArea) {
           // Re-apply console wrapping global preference
+          this._applyConsoleWrappingToContainer(this.logArea, this.style.consoleWrapping);
            for (const line of Array.from(this.logArea.children)) {
                if (line.classList.contains('console-line')) {
-                   this._applyWrappingStyle(line, this.style.consoleWrapping);
+                   // Lines
+                    if (this.style.consoleWrapping === 'scroll') {
+                        line.style.whiteSpace = 'pre';
+                        line.style.wordBreak = 'normal';
+                    } else {
+                        line.style.whiteSpace = 'pre-wrap';
+                        line.style.wordBreak = 'break-word';
+                    }
                }
            }
           this._restoreConsoleCache();
