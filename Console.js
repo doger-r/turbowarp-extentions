@@ -2,13 +2,13 @@
   'use strict';
 
   /**
-   * Console Extension v6.7 (Fixed & Enhanced)
-   * * Changes v6.7:
-   * - Decoupled Input from Console (Input can exist without Console history).
-   * - Fixed 'show input' forcing console to open.
-   * - Fixed Input visibility bugs (height calculation timing).
-   * - Added Color argument to 'log dots'.
-   * - Fixed 'log image' rendering and auto-sizing issues.
+   * Console Extension v6.8
+   * * Changes v6.8:
+   * - Added 'set input position to [TOP/BOTTOM]' block.
+   * - Added 'set enter key behavior to [SUBMIT/NEWLINE/DISABLED]' block.
+   * - Fixed 'last input selection' reporter always returning 0.
+   * - Removed artificial text size limits (min size lowered to 0.1px).
+   * - Adjusted suggestion box location based on input position.
    */
 
   const BlockType = (Scratch && Scratch.BlockType) ? Scratch.BlockType : {
@@ -40,6 +40,10 @@
       this.lastInput = '';
       this._autocorrectEnabled = false;
       
+      // Selection Tracking
+      this._currentSelection = { start: 0, end: 0 };
+      this._lastSelection = { start: 0, end: 0 };
+      
       // Autofill data
       this._commandRegistry = new Set();
       this._activeSuggestions = [];
@@ -64,7 +68,9 @@
         lineSpacing: 1.4,
         maxInputHeightPct: 40, 
         consoleWrapping: 'wrap', 
-        inputWrapping: 'wrap'
+        inputWrapping: 'wrap',
+        inputPosition: 'bottom', // 'top' or 'bottom'
+        enterBehavior: 'submit'  // 'submit', 'newline', 'disabled'
       };
       this.style = Object.assign({}, this._defaults);
 
@@ -101,7 +107,7 @@
         'getConsoleAsArray','setConsoleFromArray','getConsoleLineCount','isConsoleShown','setSelectable',
         'setTimestampFormat','toggleInput','showInput','hideInput','setInputText','runInput','clearInput','setLogInput',
         'whenInput','getLastInput','getCurrentInput','isInputShown',
-        'setAutocorrect', 'getSelectionPosition',
+        'setAutocorrect', 'getSelectionPosition', 'setInputPosition', 'setEnterBehavior',
         'addCommand', 'removeCommand', 'clearCommands',
         'setColorPicker','gradientReporter','gradient3Reporter','gradient4Reporter','setFont','setTextSizeMultiplier','setAlignment','setLineSpacing','setInputPlaceholder','setInputMaxHeight','setTextWrapping',
         'resetStyling',
@@ -130,7 +136,6 @@
           
           { opcode: 'logImage', blockType: BlockType.COMMAND, text: 'log image [SRC] size [W] x [H] roundness [R]', arguments: { SRC: { type: ArgumentType.STRING, defaultValue: 'https://extensions.turbowarp.org/dango.png' }, W: { type: ArgumentType.NUMBER, defaultValue: 0 }, H: { type: ArgumentType.NUMBER, defaultValue: 0 }, R: { type: ArgumentType.NUMBER, defaultValue: 4 } } },
           
-          // UPDATED: Added color argument
           { opcode: 'logDots', blockType: BlockType.COMMAND, text: 'log dots in color [COLOR]', arguments: { COLOR: { type: ArgumentType.COLOR, defaultValue: '#FFFFFF' } } },
           
           { opcode: 'removeLine', blockType: BlockType.COMMAND, text: 'remove console line [INDEX]', arguments: { INDEX: { type: ArgumentType.NUMBER, defaultValue: 1 } } },
@@ -167,6 +172,10 @@
           { opcode: 'getLastInput', blockType: BlockType.REPORTER, text: 'last input' },
           { opcode: 'getCurrentInput', blockType: BlockType.REPORTER, text: 'current input' },
           { opcode: 'isInputShown', blockType: BlockType.BOOLEAN, text: 'input shown?' },
+
+          // NEW BLOCKS
+          { opcode: 'setInputPosition', blockType: BlockType.COMMAND, text: 'set input position to [POS]', arguments: { POS: { type: ArgumentType.STRING, menu: 'positionMenu', defaultValue: 'bottom' } } },
+          { opcode: 'setEnterBehavior', blockType: BlockType.COMMAND, text: 'set enter key behavior to [BEHAVIOR]', arguments: { BEHAVIOR: { type: ArgumentType.STRING, menu: 'enterMenu', defaultValue: 'submit' } } },
 
           { opcode: 'setAutocorrect', blockType: BlockType.COMMAND, text: 'set browser autocorrect to [ENABLED]', arguments: { ENABLED: { type: ArgumentType.BOOLEAN, defaultValue: false } } },
           { opcode: 'getSelectionPosition', blockType: BlockType.REPORTER, text: 'input [SOURCE] selection [POSITION]', arguments: { 
@@ -205,7 +214,9 @@
           wrappingMode: ['wrap', 'scroll'],
           scrollTargetMenu: ['console', 'input'],
           inputSourceMenu: ['current', 'last'],
-          selectionPositionMenu: ['start', 'end']
+          selectionPositionMenu: ['start', 'end'],
+          positionMenu: ['top', 'bottom'],
+          enterMenu: ['submit', 'newline', 'disabled']
         }
       };
     }
@@ -244,15 +255,14 @@
         
         .console-suggestions {
           position: absolute;
-          bottom: 100%; left: 0; right: 0;
+          /* Positioning handled in JS now */
+          left: 0; right: 0;
           max-height: 150px;
           overflow-y: auto;
           display: none;
-          flex-direction: column-reverse;
           z-index: 100;
-          box-shadow: 0px -2px 10px rgba(0,0,0,0.3);
-          border-top-left-radius: 4px;
-          border-top-right-radius: 4px;
+          box-shadow: 0px 2px 10px rgba(0,0,0,0.3);
+          border-radius: 4px;
           scrollbar-width: none; 
           -ms-overflow-style: none;
         }
@@ -336,7 +346,6 @@
         this._restoreConsoleCache();
       }
 
-      // FIXED: Input UI check no longer strictly depends on consoleOverlay existence for logic
       if (this.inputVisible && (!this.inputOverlay || !this.stage.contains(this.inputOverlay))) {
         if (this.inputOverlay && this.inputField && typeof this.inputField.value === 'string') this._inputCache = this.inputField.value;
         this.inputOverlay = null;
@@ -356,8 +365,9 @@
       const scale = stageH / 360;
       const base = 14;
 
-      this._computedTsPx = Math.max(1, base * scale * (this.style.sizeTimestamp || 1));
-      this._computedInputPx = Math.max(1, base * scale * (this.style.sizeInput || 1));
+      // Min clamp lowered to 0.1 to effectively remove limit
+      this._computedTsPx = Math.max(0.1, base * scale * (this.style.sizeTimestamp || 1));
+      this._computedInputPx = Math.max(0.1, base * scale * (this.style.sizeInput || 1));
 
       // Resize all lines in logArea
       if (this.logArea) {
@@ -365,7 +375,7 @@
           if (line.classList.contains('console-spacing')) continue; 
           
           const lineMult = line.dataset.sizeMult ? Number(line.dataset.sizeMult) : (this.style.sizeText || 1);
-          const linePx = Math.max(1, base * scale * lineMult);
+          const linePx = Math.max(0.1, base * scale * lineMult);
 
           const spans = line.querySelectorAll('span');
           if (spans[0]) spans[0].style.fontSize = `${this._computedTsPx}px`;
@@ -386,12 +396,21 @@
         this.suggestionBox.style.fontFamily = this.style.fontInput;
       }
 
-      // FIXED: Only apply padding to console overlay if it exists
-      if (this.consoleOverlay && this.inputField && this.inputVisible) {
-        const inputHt = this.inputField.offsetHeight || (this._computedInputPx + 36);
-        this.consoleOverlay.style.paddingBottom = `${inputHt}px`;
-      } else if (this.consoleOverlay) {
-        this.consoleOverlay.style.paddingBottom = '';
+      // Handle Padding for Input Position
+      if (this.consoleOverlay) {
+          if (this.inputField && this.inputVisible) {
+              const inputHt = this.inputField.offsetHeight || (this._computedInputPx + 36);
+              if (this.style.inputPosition === 'top') {
+                  this.consoleOverlay.style.paddingTop = `${inputHt}px`;
+                  this.consoleOverlay.style.paddingBottom = '';
+              } else {
+                  this.consoleOverlay.style.paddingTop = '';
+                  this.consoleOverlay.style.paddingBottom = `${inputHt}px`;
+              }
+          } else {
+              this.consoleOverlay.style.paddingTop = '';
+              this.consoleOverlay.style.paddingBottom = '';
+          }
       }
     }
 
@@ -410,10 +429,18 @@
         
         // Ensure at least some height if contentHeight is weirdly 0
         const minH = this._computedInputPx ? (this._computedInputPx + 20) : 30;
-        this.inputField.style.height = `${Math.max(minH, finalHeight)}px`;
+        const actualH = Math.max(minH, finalHeight);
+        
+        this.inputField.style.height = `${actualH}px`;
 
         if (this.consoleOverlay && this.inputVisible) {
-            this.consoleOverlay.style.paddingBottom = `${Math.max(minH, finalHeight)}px`;
+            if (this.style.inputPosition === 'top') {
+                this.consoleOverlay.style.paddingTop = `${actualH}px`;
+                this.consoleOverlay.style.paddingBottom = '';
+            } else {
+                this.consoleOverlay.style.paddingTop = '';
+                this.consoleOverlay.style.paddingBottom = `${actualH}px`;
+            }
         }
     }
 
@@ -462,18 +489,46 @@
       if (this.inputOverlay && this.stage.contains(this.inputOverlay)) return;
 
       const overlay = document.createElement('div');
-      Object.assign(overlay.style, { 
-          position: 'absolute', left: '0', right: '0', bottom: '0', 
-          zIndex: '60', 
-          boxSizing: 'border-box',
-          display: 'block' 
-      });
+      // Position based on user preference
+      if (this.style.inputPosition === 'top') {
+          Object.assign(overlay.style, { 
+              position: 'absolute', left: '0', right: '0', top: '0', bottom: 'auto', 
+              zIndex: '60', boxSizing: 'border-box', display: 'block' 
+          });
+      } else {
+          Object.assign(overlay.style, { 
+              position: 'absolute', left: '0', right: '0', bottom: '0', top: 'auto',
+              zIndex: '60', boxSizing: 'border-box', display: 'block' 
+          });
+      }
 
       // -- Suggestion Box (Autofill) --
       const suggestionBox = document.createElement('div');
       suggestionBox.className = 'console-suggestions';
       suggestionBox.style.background = this.style.inputBG; 
       suggestionBox.style.color = this._firstColorFromRaw(this.style.inputTextRaw);
+      
+      // Position suggestions relative to input
+      if (this.style.inputPosition === 'top') {
+          suggestionBox.style.top = '100%';
+          suggestionBox.style.bottom = 'auto';
+          suggestionBox.style.flexDirection = 'column'; // Standard dropdown
+          suggestionBox.style.borderTopLeftRadius = '0';
+          suggestionBox.style.borderTopRightRadius = '0';
+          suggestionBox.style.borderBottomLeftRadius = '4px';
+          suggestionBox.style.borderBottomRightRadius = '4px';
+          suggestionBox.style.boxShadow = '0px 2px 10px rgba(0,0,0,0.3)';
+      } else {
+          suggestionBox.style.bottom = '100%';
+          suggestionBox.style.top = 'auto';
+          suggestionBox.style.flexDirection = 'column-reverse'; // Grow upwards
+          suggestionBox.style.borderBottomLeftRadius = '0';
+          suggestionBox.style.borderBottomRightRadius = '0';
+          suggestionBox.style.borderTopLeftRadius = '4px';
+          suggestionBox.style.borderTopRightRadius = '4px';
+          suggestionBox.style.boxShadow = '0px -2px 10px rgba(0,0,0,0.3)';
+      }
+
       overlay.appendChild(suggestionBox);
       this.suggestionBox = suggestionBox;
 
@@ -503,7 +558,23 @@
       input.placeholder = this.style.inputPlaceholder != null ? this.style.inputPlaceholder : this._defaults.inputPlaceholder;
       this._updatePlaceholderCSS(this.style.inputPlaceholderColorRaw || this._defaults.inputPlaceholderColorRaw);
 
+      // --- Track Selection ---
+      const updateSelection = () => {
+          this._currentSelection = {
+              start: input.selectionStart || 0,
+              end: input.selectionEnd || 0
+          };
+      };
+      input.addEventListener('keyup', updateSelection);
+      input.addEventListener('click', updateSelection);
+      input.addEventListener('select', updateSelection);
+      input.addEventListener('focus', updateSelection);
+      input.addEventListener('blur', updateSelection);
+
+      // --- Key Handling ---
       input.addEventListener('keydown', (e) => {
+        updateSelection(); // Track before any action
+
         if (e.key === 'Tab') {
           e.preventDefault();
           if (this._activeSuggestions.length > 0) {
@@ -519,7 +590,7 @@
         if (e.key === 'ArrowUp') {
             if (this.suggestionBox.style.display === 'flex') {
                 e.preventDefault();
-                this._navigateSuggestions(1);
+                this._navigateSuggestions(1); // Nav logic assumes list order, direction handled by flex
             }
             return;
         }
@@ -530,39 +601,70 @@
             }
             return;
         }
+        
+        // Enter Key Logic based on Behavior Setting
         if (e.key === 'Enter') {
-            if (e.shiftKey) {
+            const behavior = this.style.enterBehavior; // 'submit', 'newline', 'disabled'
+
+            // --- DISABLED ---
+            if (behavior === 'disabled') {
+                e.preventDefault();
+                return;
+            }
+
+            // --- NEWLINE ---
+            if (behavior === 'newline') {
+                // Default textarea behavior is newline, so we just allow it unless shift logic changes
+                // If we want Shift+Enter to also be newline, we do nothing.
                 setTimeout(() => this._updateInputHeight(), 0);
                 return;
             }
-            e.preventDefault();
-            if (this.suggestionBox.style.display === 'flex' && this._suggestionIndex !== -1) {
-                const chosen = this._activeSuggestions[this._suggestionIndex];
-                input.value = chosen;
-                this._inputCache = chosen;
-                this._hideSuggestions();
-                this._updateInputHeight(); 
-            } else {
-                const txt = input.value;
-                input.value = '';
-                this._inputCache = '';
-                this._hideSuggestions();
-                this._dispatchInput(txt, true);
-                this._updateInputHeight(); 
+
+            // --- SUBMIT (Default) ---
+            if (behavior === 'submit') {
+                // Shift+Enter creates newline
+                if (e.shiftKey) {
+                    setTimeout(() => this._updateInputHeight(), 0);
+                    return;
+                }
+                
+                // Submit logic
+                e.preventDefault();
+                if (this.suggestionBox.style.display === 'flex' && this._suggestionIndex !== -1) {
+                    const chosen = this._activeSuggestions[this._suggestionIndex];
+                    input.value = chosen;
+                    this._inputCache = chosen;
+                    this._hideSuggestions();
+                    this._updateInputHeight(); 
+                } else {
+                    const txt = input.value;
+                    input.value = '';
+                    this._inputCache = '';
+                    this._hideSuggestions();
+                    this._dispatchInput(txt);
+                    this._updateInputHeight(); 
+                }
             }
         }
       });
 
       input.addEventListener('input', () => { 
           this._inputCache = input.value; 
+          updateSelection();
           this._updateSuggestions(input.value);
           this._updateInputHeight(); 
       });
       input.addEventListener('blur', () => { 
         this._inputCache = input.value; 
+        updateSelection();
         setTimeout(() => this._hideSuggestions(), 200);
       });
-      input.addEventListener('focus', () => { this._updateSuggestions(input.value); });
+      
+      // Initial focus isn't strictly necessary but helpful if user clicked show input
+      input.addEventListener('focus', () => { 
+          updateSelection();
+          this._updateSuggestions(input.value); 
+      });
 
       overlay.appendChild(input);
       try { this.stage.appendChild(overlay); } catch (e) { document.body.appendChild(overlay); }
@@ -572,7 +674,6 @@
       this._applyInputBackground(this.style.inputBG);
       this._applyInputTextColor(this.style.inputTextRaw);
       
-      // FIXED: Force height update in next frame to prevent 0-height bug on first show
       requestAnimationFrame(() => {
           this._resizeDynamicSizes();
           this._updateInputHeight();
@@ -589,7 +690,6 @@
             this._hideSuggestions();
             return;
         }
-        const lower = text.toLowerCase();
         const lines = text.split('\n');
         const currentLine = lines[lines.length - 1].trim();
         
@@ -778,14 +878,14 @@
         const img = document.createElement('img');
         img.className = 'console-img';
         img.src = entry.src || '';
-        img.referrerPolicy = 'no-referrer'; // FIXED: helps with external images
+        img.referrerPolicy = 'no-referrer'; 
         
         const valW = Number(entry.width) || 0;
         const valH = Number(entry.height) || 0;
         const roundness = Number(entry.roundness) || 4;
 
         if (valW === 0 && valH === 0) {
-          img.style.width = 'auto'; // allow natural size, max-width handled by css
+          img.style.width = 'auto'; 
           img.style.maxWidth = '100%';
           img.style.height = 'auto';
         } else if (valW === 0) {
@@ -800,7 +900,7 @@
         }
         
         img.style.borderRadius = `${Math.max(0, roundness)}px`;
-        img.style.display = 'block'; // Ensure image takes its own line block
+        img.style.display = 'block'; 
 
         img.onload = () => {
           if (this._autoScrollEnabled && this.logArea) {
@@ -928,7 +1028,7 @@
 
     // ---- logging & message methods ----
     _log (text, color, type = 'text', entryOverride = {}) {
-      if (!text && type === 'text') return; // Only skip empty text if type is text
+      if (!text && type === 'text') return; 
 
       const entry = Object.assign({
         id: this._nextId++,
@@ -949,7 +1049,6 @@
 
     logMessage (args) { this._log(args.TEXT, args.COLOR); }
     
-    // FIXED: Passed parameters correctly to _log
     logImage (args) {
       this._log('', null, 'image', {
         src: String(args.SRC || ''),
@@ -964,14 +1063,13 @@
     _dotsInterval = null;
     logDots (args) {
       const text = '...';
-      const color = args.COLOR || '#FFFFFF'; // FIXED: Use color arg
+      const color = args.COLOR || '#FFFFFF'; 
       
       const lastEntry = this._consoleCache[this._consoleCache.length - 1];
 
-      // If existing dots, update
       if (lastEntry && lastEntry.type === 'dots') {
         lastEntry.ts = Date.now();
-        lastEntry.colorRaw = color; // Update color of existing
+        lastEntry.colorRaw = color; 
         if (this.logArea) {
           const el = this.logArea.querySelector(`[data-id="${lastEntry.id}"]`);
           if (el) {
@@ -1395,9 +1493,10 @@
       const part = String(args.PART || 'text').toLowerCase();
       const m = Number(args.MULTIPLIER) || 1;
       
-      if (part === 'text') this.style.sizeText = Math.max(0.1, m);
-      else if (part === 'timestamp') this.style.sizeTimestamp = Math.max(0.1, m);
-      else if (part === 'input') this.style.sizeInput = Math.max(0.1, m);
+      // Removed 1.0 limit, using 0.1 to avoid negatives/zeros
+      if (part === 'text') this.style.sizeText = Math.max(0.01, m);
+      else if (part === 'timestamp') this.style.sizeTimestamp = Math.max(0.01, m);
+      else if (part === 'input') this.style.sizeInput = Math.max(0.01, m);
 
       this._resizeDynamicSizes();
     }
@@ -1484,6 +1583,8 @@
       
       this._autocorrectEnabled = false; 
       this.setAutocorrect({ ENABLED: false });
+      this.setInputPosition({ POS: 'bottom' });
+      this.setEnterBehavior({ BEHAVIOR: 'submit' });
 
       this._resizeDynamicSizes();
     }
@@ -1517,13 +1618,6 @@
         this.logArea = null;
       }
       this.consoleVisible = false;
-      // FIXED: hideConsole does NOT force hideInput anymore.
-      
-      // If Input is visible, we need to remove padding because consoleOverlay is gone.
-      if (this.inputVisible && this.inputOverlay) {
-          // No op here really, just ensure proper state in ensureUI
-      }
-      
       this._disconnectObserverAndLoop();
     }
 
@@ -1546,7 +1640,6 @@
 
     showInput () {
       if (!this.inputVisible) {
-        // FIXED: Removed forced console show. Input can exist standalone.
         this.inputVisible = true;
         this._createInput();
         if (this.inputField) {
@@ -1554,10 +1647,8 @@
             this.inputField.focus(); 
             this._updateInputHeight();
         }
-        if (this.consoleOverlay) { 
-            const inputHt = this.inputField ? (this.inputField.offsetHeight || (this._computedInputPx + 36)) : 0;
-            this.consoleOverlay.style.paddingBottom = `${inputHt}px`;
-        }
+        // Force resize to apply padding to console if needed
+        this._resizeDynamicSizes();
       }
     }
 
@@ -1576,7 +1667,10 @@
       this.inputVisible = false;
       this._activeSuggestions = []; 
       
-      if (this.consoleOverlay) this.consoleOverlay.style.paddingBottom = ''; 
+      if (this.consoleOverlay) {
+          this.consoleOverlay.style.paddingBottom = ''; 
+          this.consoleOverlay.style.paddingTop = '';
+      }
       
       if (this.logArea && priorAtBottom) this._instantScrollToBottom(); 
     }
@@ -1589,7 +1683,7 @@
     }
 
     runInput (args) {
-      this._dispatchInput(String(args.TEXT || ''), false);
+      this._dispatchInput(String(args.TEXT || ''));
     }
 
     clearInput () {
@@ -1619,23 +1713,46 @@
         const source = String(args.SOURCE || 'current').toLowerCase();
         const position = String(args.POSITION || 'start').toLowerCase();
 
+        // Check stored selection for last input, or current live selection
+        let selectionObj = this._currentSelection;
         if (source === 'last') {
-            return 0;
+            selectionObj = this._lastSelection;
+        } else if (this.inputField) {
+            // Update current if we can
+            selectionObj = {
+                start: this.inputField.selectionStart || 0,
+                end: this.inputField.selectionEnd || 0
+            };
         }
 
-        if (this.inputField) {
-            if (position === 'start') {
-                return this.inputField.selectionStart || 0;
-            } else if (position === 'end') {
-                return this.inputField.selectionEnd || 0;
-            }
-        }
+        if (position === 'start') return selectionObj.start;
+        if (position === 'end') return selectionObj.end;
         return 0;
     }
 
-    _dispatchInput (text, manual) {
+    setInputPosition (args) {
+        const pos = String(args.POS || 'bottom').toLowerCase();
+        this.style.inputPosition = (pos === 'top') ? 'top' : 'bottom';
+        
+        // Re-create input to apply new positioning styles
+        if (this.inputVisible) {
+            this.hideInput();
+            this.showInput();
+        }
+    }
+
+    setEnterBehavior (args) {
+        const b = String(args.BEHAVIOR || 'submit').toLowerCase();
+        const valid = ['submit', 'newline', 'disabled'];
+        this.style.enterBehavior = valid.includes(b) ? b : 'submit';
+    }
+
+    _dispatchInput (text) {
       const txt = String(text || '');
       this.lastInput = txt;
+      // Snapshot selection at moment of dispatch for 'last' reporter
+      this._lastSelection = { ...this._currentSelection };
+      
       if (this.logInputEnabled && txt.trim()) this._log('> ' + txt.trim(), '#FFFFFF');
       
       this._inputEventId = (this._inputEventId || 0) + 1;
