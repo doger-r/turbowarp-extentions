@@ -2,7 +2,7 @@
   'use strict';
 
   /**
-   * Console Extension v6
+   * Console Extension v6.1 (Newline Support)
    * * Features:
    * - Advanced Logging (Text, Gradients, Images)
    * - Individual Line Styling (Font, Size, Align overrides)
@@ -13,6 +13,7 @@
    * - Image Roundness (border-radius)
    * - Auto-spacing for images (Hidden in JSON)
    * - Fixes: Line counting ignores spacing, Image autoscroll, Scrollbar hiding
+   * - Update: Input is now a Textarea allowing Newlines (Shift+Enter)
    */
 
   const BlockType = (Scratch && Scratch.BlockType) ? Scratch.BlockType : {
@@ -55,7 +56,7 @@
         inputBG: '#222222',
         inputTextRaw: '#FFFFFF',
         timestampTextRaw: '#FFFFFF',
-        inputPlaceholder: 'Type command...',
+        inputPlaceholder: 'Type command... (Shift+Enter for new line)',
         inputPlaceholderColorRaw: '#888888',
         fontText: 'Sans Serif',
         fontTimestamp: 'Sans Serif',
@@ -176,7 +177,7 @@
           { opcode: 'setAlignment', blockType: BlockType.COMMAND, text: 'set [PART] alignment to [ALIGN]', arguments: { PART: { type: ArgumentType.STRING, menu: 'alignmentParts', defaultValue: 'text' }, ALIGN: { type: ArgumentType.STRING, menu: 'alignmentMenu', defaultValue: 'left' } } },
 
           { opcode: 'setLineSpacing', blockType: BlockType.COMMAND, text: 'set line spacing to [SPACING]', arguments: { SPACING: { type: ArgumentType.NUMBER, defaultValue: 1.4 } } },
-          { opcode: 'setInputPlaceholder', blockType: BlockType.COMMAND, text: 'set input placeholder to [TEXT]', arguments: { TEXT: { type: ArgumentType.STRING, defaultValue: 'Type command...' } } },
+          { opcode: 'setInputPlaceholder', blockType: BlockType.COMMAND, text: 'set input placeholder to [TEXT]', arguments: { TEXT: { type: ArgumentType.STRING, defaultValue: 'Type command... (Shift+Enter for new line)' } } },
           { opcode: 'setTimestampFormat', blockType: BlockType.COMMAND, text: 'set timestamp format to [FORMAT]', arguments: { FORMAT: { type: ArgumentType.STRING, menu: 'timeFormat', defaultValue: 'off' } } },
           { opcode: 'resetStyling', blockType: BlockType.COMMAND, text: 'reset styling' }
         ],
@@ -202,7 +203,15 @@
         .console-line { white-space: pre-wrap; word-break: break-word; display: block; }
         .console-spacing { width: 100%; display: block; } 
 
-        .console-input { outline: none !important; box-shadow: none !important; border: none !important; background-repeat: no-repeat; }
+        .console-input { 
+          outline: none !important; 
+          box-shadow: none !important; 
+          border: none !important; 
+          background-repeat: no-repeat;
+          resize: none !important;
+          overflow-y: auto; 
+          white-space: pre-wrap; 
+        }
         .console-input::placeholder { color: var(--console-input-placeholder-color, ${this._defaults.inputPlaceholderColorRaw}) !important; opacity: 1 !important; }
         .console-line span { vertical-align: middle; }
         .console-img { vertical-align: middle; max-width: 100%; } /* border-radius applied inline */
@@ -348,6 +357,9 @@
         this.inputField.style.fontSize = `${this._computedInputPx}px`;
         this.inputField.style.fontFamily = this.style.fontInput;
         this.inputField.style.textAlign = this.style.inputAlign;
+        // Adjust fixed height relative to scale so it's not too small on big screens
+        const estLineHeight = this._computedInputPx * 1.5;
+        this.inputField.style.height = `${Math.max(40, estLineHeight * 2.5)}px`; // Make room for ~2.5 lines
       }
       if (this.suggestionBox) {
         this.suggestionBox.style.fontSize = `${this._computedInputPx}px`;
@@ -355,7 +367,7 @@
       }
 
       if (this.consoleOverlay && this.inputField && this.inputVisible) {
-        const inputHt = this.inputField.getBoundingClientRect().height || (this._computedInputPx + 16);
+        const inputHt = this.inputField.getBoundingClientRect().height || (this._computedInputPx + 36);
         this.consoleOverlay.style.paddingBottom = `${inputHt}px`;
       } else if (this.consoleOverlay) {
         this.consoleOverlay.style.paddingBottom = '';
@@ -412,11 +424,17 @@
       overlay.appendChild(suggestionBox);
       this.suggestionBox = suggestionBox;
 
-      const input = document.createElement('input');
+      // CHANGED: Use textarea for multiline support
+      const input = document.createElement('textarea');
       input.className = 'console-input';
       Object.assign(input.style, {
         width: '100%', border: 'none', outline: 'none', padding: '10px',
-        background: this.style.inputBG, color: this._firstColorFromRaw(this.style.inputTextRaw), fontFamily: this.style.fontInput, boxSizing: 'border-box'
+        background: this.style.inputBG, 
+        color: this._firstColorFromRaw(this.style.inputTextRaw), 
+        fontFamily: this.style.fontInput, 
+        boxSizing: 'border-box',
+        resize: 'none', // Prevent manual resizing, we control dimensions
+        overflowY: 'auto'
       });
 
       input.placeholder = this.style.inputPlaceholder != null ? this.style.inputPlaceholder : this._defaults.inputPlaceholder;
@@ -449,19 +467,26 @@
             return;
         }
         if (e.key === 'Enter') {
-          e.preventDefault();
-          if (this.suggestionBox.style.display === 'flex' && this._suggestionIndex !== -1) {
-             const chosen = this._activeSuggestions[this._suggestionIndex];
-             input.value = chosen;
-             this._inputCache = chosen;
-             this._hideSuggestions();
-          } else {
-             const txt = input.value;
-             input.value = '';
-             this._inputCache = '';
-             this._hideSuggestions();
-             this._dispatchInput(txt, true);
-          }
+            // CHANGED: Allow Shift+Enter for newlines
+            if (e.shiftKey) {
+                // Allow default behavior (insert newline)
+                return;
+            }
+
+            // Normal Enter: Submit
+            e.preventDefault();
+            if (this.suggestionBox.style.display === 'flex' && this._suggestionIndex !== -1) {
+                const chosen = this._activeSuggestions[this._suggestionIndex];
+                input.value = chosen;
+                this._inputCache = chosen;
+                this._hideSuggestions();
+            } else {
+                const txt = input.value;
+                input.value = '';
+                this._inputCache = '';
+                this._hideSuggestions();
+                this._dispatchInput(txt, true);
+            }
         }
       });
 
@@ -496,8 +521,17 @@
             return;
         }
         const lower = text.toLowerCase();
+        // Simple heuristic: match against the last line if multiple lines exist, or whole text
+        const lines = text.split('\n');
+        const currentLine = lines[lines.length - 1].trim();
+        
+        if (!currentLine) {
+             this._hideSuggestions();
+             return;
+        }
+
         this._activeSuggestions = Array.from(this._commandRegistry)
-            .filter(cmd => cmd.toLowerCase().includes(lower))
+            .filter(cmd => cmd.toLowerCase().includes(currentLine.toLowerCase()))
             .sort();
 
         if (this._activeSuggestions.length === 0) {
