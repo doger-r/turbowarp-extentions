@@ -2,12 +2,13 @@
   'use strict';
 
   /**
-   * Console Extension v7.2
-   * * Changes v7.2:
-   * - Fixed Input Text Selection offset issues by normalizing box-models.
-   * - 'Set color' blocks now strictly ignored if Text Style is 'javascript'.
-   * - Added Scrollbar Visibility controls (Horizontal/Vertical).
-   * - Fixed Background 'Scrollable' vs 'Static' logic.
+   * Console Extension v7.4
+   * * Changes v7.4:
+   * - Fixed Shift+Enter logic (stop propagation, cache update).
+   * - Fixed Scrollbar cursors (Default on track, Text on content).
+   * - Fixed Input visibility issues on stage resize/fullscreen.
+   * - Fixed Javascript style resetting text color to white.
+   * - Fixed Scrollable Backgrounds (Image stretches to full scroll height).
    */
 
   const BlockType = (Scratch && Scratch.BlockType) ? Scratch.BlockType : {
@@ -262,8 +263,11 @@
       const style = document.createElement('style');
       style.textContent = `
         /* BASE SCROLLBAR HIDING (Default) */
-        .console-scroller { scrollbar-width: none; -ms-overflow-style: none; }
+        /* Changed: Added overflow: auto so it remains scrollable even if visual bar is hidden */
+        /* Changed: cursor: default ensures the arrow cursor on the scrollbar track */
+        .console-scroller { scrollbar-width: none; -ms-overflow-style: none; overflow: auto; cursor: default; }
         .console-scroller::-webkit-scrollbar { display: none; }
+        .console-scroller::-webkit-scrollbar-corner { background: transparent; }
 
         /* SCROLLBAR VISIBILITY OVERRIDES */
         .console-scroller.sb-show-y { overflow-y: auto !important; scrollbar-width: auto !important; }
@@ -273,11 +277,15 @@
         .console-scroller.sb-show-x { overflow-x: auto !important; scrollbar-width: auto !important; }
         .console-scroller.sb-show-x::-webkit-scrollbar { display: block !important; height: 8px; background: rgba(0,0,0,0.1); }
         .console-scroller.sb-show-x::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 4px; }
+        
+        /* Specific fix for when BOTH bars are shown */
+        .console-scroller.sb-show-x.sb-show-y::-webkit-scrollbar { width: 8px; height: 8px; }
 
         .console-line { 
           display: block; 
           width: fit-content; 
           min-width: 100%;
+          cursor: text; /* Ensures text cursor on content */
         }
         .console-spacing { width: 100%; display: block; } 
 
@@ -319,7 +327,7 @@
           box-shadow: none !important; 
           background-color: transparent !important; 
           resize: none !important;
-          overflow: hidden; /* Synced via JS mostly, or classes */
+          overflow: auto; /* Ensure it's scrollable */
           display: block; 
           margin: 0; 
           padding: 0; /* Padding is on wrapper */
@@ -402,6 +410,7 @@
           if (this.inputField && typeof this.inputField.value === 'string') this._inputCache = this.inputField.value;
           this._ensureUI();
           this._resizeDynamicSizes();
+          this._updateScrollableBackgrounds();
         });
         this._observer.observe(this.stage);
       } catch (e) {}
@@ -435,10 +444,14 @@
         this.inputHighlight = null;
         this.suggestionBox = null;
         this._createInput();
+        // Restore input state
         if (this.inputField && this._inputCache) {
              this.inputField.value = this._inputCache;
              this._updateInputSyntax(); 
+             this._updateInputHeight(); // Fixed: Ensure height is corrected on recreation
         }
+        // Restore styling logic that might have been lost
+        this._applyInputTextColor(this.style.inputTextRaw);
       }
       if (Date.now() - (this._lastUserScroll || 0) > this._userScrollGrace) this._applyCachedScroll();
     }
@@ -471,8 +484,6 @@
       }
 
       if (this.inputField && this.inputHighlight) {
-        const fontStr = `${this._computedInputPx}px ${this.style.fontInput}`;
-        
         const props = {
             fontSize: `${this._computedInputPx}px`,
             fontFamily: this.style.fontInput,
@@ -506,6 +517,20 @@
               this.consoleOverlay.style.paddingBottom = '';
           }
       }
+      
+      this._updateScrollableBackgrounds();
+    }
+
+    _updateScrollableBackgrounds() {
+        // Stretch background to fit full scrollable height if mode is scrollable
+        if (this.style.consoleBgAttachment === 'scrollable' && this.logArea) {
+             const h = Math.max(this.logArea.scrollHeight, this.logArea.clientHeight);
+             this.logArea.style.backgroundSize = `100% ${h}px`;
+        }
+        if (this.style.inputBgAttachment === 'scrollable' && this.inputField) {
+             const h = Math.max(this.inputField.scrollHeight, this.inputField.clientHeight);
+             this.inputField.style.backgroundSize = `100% ${h}px`;
+        }
     }
 
     _updateInputHeight() {
@@ -523,7 +548,11 @@
         const contentHeight = this.inputField.scrollHeight;
         
         const clampedH = Math.min(Math.max(contentHeight, minHeightPx), maxHeightPx);
-        const minH = this._computedInputPx ? (this._computedInputPx + 20) : 30;
+        
+        // Changed: Calculate min height based on font size * line-height(1.5) + padding(20)
+        // This prevents single line input from cutting off descenders
+        const minH = this._computedInputPx ? ((this._computedInputPx * 1.5) + 20) : 34;
+        
         const actualH = Math.max(minH, clampedH);
         
         // Apply height to wrapper
@@ -540,6 +569,8 @@
                 this.consoleOverlay.style.paddingBottom = `${actualH}px`;
             }
         }
+        
+        this._updateScrollableBackgrounds();
     }
 
     // ---- create/destroy console & input ----
@@ -658,6 +689,10 @@
 
       input.placeholder = this.style.inputPlaceholder != null ? this.style.inputPlaceholder : this._defaults.inputPlaceholder;
       this._updatePlaceholderCSS(this.style.inputPlaceholderColorRaw || this._defaults.inputPlaceholderColorRaw);
+      
+      // FIX: Ensure correct background attachment for input if scrollable
+      // The input element (textarea) is the one that scrolls, so it should be the target
+      this._updateBackgrounds('input', inputWrapper, input);
 
       // Event listeners for Syncing
       const syncScroll = () => { highlight.scrollTop = input.scrollTop; highlight.scrollLeft = input.scrollLeft; };
@@ -717,10 +752,22 @@
             }
             if (behavior === 'submit') {
                 if (e.shiftKey) {
-                    setTimeout(() => { this._updateInputHeight(); this._updateInputSyntax(); syncScroll(); }, 0);
+                    // FIX: Shift+Enter
+                    // 1. Update cache immediately so state is valid
+                    // 2. Stop propagation to prevent any global key handler issues
+                    // 3. SetTimeout to update height after browser inserts newline
+                    this._inputCache = input.value; 
+                    setTimeout(() => { 
+                        this._inputCache = input.value; // Update cache again after newline inserted
+                        this._updateInputHeight(); 
+                        this._updateInputSyntax(); 
+                        syncScroll(); 
+                    }, 0);
+                    e.stopPropagation();
                     return;
                 }
                 e.preventDefault();
+                e.stopPropagation(); // Stop propagation for submit too
                 if (this.suggestionBox.style.display === 'flex' && this._suggestionIndex !== -1) {
                     const chosen = this._activeSuggestions[this._suggestionIndex];
                     input.value = chosen;
@@ -942,7 +989,8 @@
       
       if (imageRaw) {
           el.style.backgroundImage = `url("${imageRaw}")`;
-          el.style.backgroundSize = 'cover';
+          // Changed: fit the full image (stretch) instead of cover
+          el.style.backgroundSize = '100% 100%';
           el.style.backgroundPosition = 'center';
           el.style.backgroundRepeat = 'no-repeat';
       }
@@ -965,6 +1013,14 @@
       if (this.style.textStyle === 'javascript') {
           // Caret needs to be visible. Default to white or hex match if possible.
           this.inputField.style.caretColor = '#FFFFFF'; 
+          
+          // FIX: Ensure base text is visible (white) when JS style is active
+          // Otherwise it stays transparent or inherits previous color if reset
+          if (this.inputHighlight) {
+             this.inputHighlight.style.color = '#FFFFFF'; 
+             this.inputHighlight.style.background = 'none'; 
+             this.inputHighlight.style.webkitTextFillColor = '';
+          }
           return;
       }
 
@@ -1115,21 +1171,47 @@
 
     // --- Helper: Javascript Syntax Highlighting ---
     _renderJavascriptSyntax(container, text, font) {
-        const tokenRegex = /(\/\/.*)|(".*?")|('.*?')|(`.*?`)|(\b(const|let|var|if|else|function|return|true|false|null|undefined|class|new|this|await|async|try|catch|while|for|switch|case|break|continue)\b)|(\b\d+\b)|([\s\S])/g;
-        
-        let match;
-        while ((match = tokenRegex.exec(text)) !== null) {
-            const span = document.createElement('span');
-            span.style.fontFamily = font;
-            span.textContent = match[0];
-            
-            if (match[1]) span.className = 'console-syntax-comment';
-            else if (match[2] || match[3] || match[4]) span.className = 'console-syntax-string';
-            else if (match[5]) span.className = 'console-syntax-keyword';
-            else if (match[7]) span.className = 'console-syntax-number';
-            else span.style.color = 'inherit'; 
+        // Optimized: Build HTML string instead of DOM nodes for every char
+        // Regex matches tokens. We handle the "gaps" (plain text) manually.
+        const tokenRegex = /(\/\/.*)|(".*?")|('.*?')|(`.*?`)|(\b(const|let|var|if|else|function|return|true|false|null|undefined|class|new|this|await|async|try|catch|while|for|switch|case|break|continue)\b)|(\b\d+\b)/g;
 
-            container.appendChild(span);
+        let lastIndex = 0;
+        let match;
+        let html = '';
+        
+        // Escape helper (basic)
+        const escapeHTML = (str) => str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+        container.style.fontFamily = font;
+
+        while ((match = tokenRegex.exec(text)) !== null) {
+            // Append plain text before token
+            if (match.index > lastIndex) {
+                html += escapeHTML(text.substring(lastIndex, match.index));
+            }
+
+            const val = escapeHTML(match[0]);
+            let cls = '';
+            
+            if (match[1]) cls = 'console-syntax-comment';
+            else if (match[2] || match[3] || match[4]) cls = 'console-syntax-string';
+            else if (match[5]) cls = 'console-syntax-keyword';
+            else if (match[7]) cls = 'console-syntax-number';
+            
+            if (cls) html += `<span class="${cls}">${val}</span>`;
+            else html += val;
+
+            lastIndex = tokenRegex.lastIndex;
+        }
+
+        // Append remaining text
+        if (lastIndex < text.length) {
+            html += escapeHTML(text.substring(lastIndex));
+        }
+        
+        container.innerHTML = html;
+        if (text.endsWith('\n')) {
+             container.appendChild(document.createTextNode('\u200B'));
         }
     }
 
@@ -1727,7 +1809,8 @@
             if (this.consoleOverlay) this._updateBackgrounds('console', this.consoleOverlay, this.logArea);
         } else {
             this.style.inputBgImage = url;
-            if (this.inputWrapper) this._updateBackgrounds('input', this.inputWrapper, null);
+            // FIX: Pass input field as scroller for background updates
+            if (this.inputWrapper) this._updateBackgrounds('input', this.inputWrapper, this.inputField);
         }
     }
     
@@ -1740,7 +1823,8 @@
             if (this.consoleOverlay) this._updateBackgrounds('console', this.consoleOverlay, this.logArea);
         } else {
             this.style.inputBgAttachment = mode;
-            if (this.inputWrapper) this._updateBackgrounds('input', this.inputWrapper, null);
+            // FIX: Pass input field as scroller
+            if (this.inputWrapper) this._updateBackgrounds('input', this.inputWrapper, this.inputField);
         }
     }
     
