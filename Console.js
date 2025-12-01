@@ -2,11 +2,11 @@
   'use strict';
 
   /**
-   * Console Extension v8.3 (Alignment Tweaks)
+   * Console Extension v8.4 (Fixes & Alignment)
    * * Changes:
-   * - Adjusted default line spacing to 1.2 for both Console and Input.
-   * - Increased negative margin on Console container (-6px) to align items higher.
-   * - Unified line-height calculation (pixel-based) persists.
+   * - Fixed timestamps being deleted when using JavaScript formatting.
+   * - Fixed the first token (e.g. "let") inheriting timestamp size in JS mode.
+   * - Aligned Input text height to match Console text height (applied matching -6px offset).
    */
 
   const BlockType = (Scratch && Scratch.BlockType) ? Scratch.BlockType : {
@@ -543,6 +543,11 @@
         
         Object.assign(this.inputField.style, props);
         Object.assign(this.inputHighlight.style, props);
+        
+        // --- NEW ALIGNMENT FIX ---
+        // Apply the same negative top margin as the console to align text baselines
+        this.inputField.style.marginTop = '-6px';
+        this.inputHighlight.style.marginTop = '-6px';
         
         this._updateInputHeight();
       }
@@ -1174,19 +1179,30 @@
         container.appendChild(img);
       } else {
         // --- TEXT RENDERING LOGIC ---
+        // Create a separate wrapper for content to preserve timestamp span
+        const msgSpan = document.createElement('span');
+        container.appendChild(msgSpan);
+
         if (this.style.textStyle === 'javascript') {
-            this._renderJavascriptSyntax(container, entry.text, this.style.fontText);
+            // Javascript syntax renderer needs to target the wrapper, not the container
+            // This prevents wiping the timestamp span.
+            this._renderJavascriptSyntax(msgSpan, entry.text, this.style.fontText);
         } else {
-            const parsed = this._parseColorArg(entry.colorRaw || '#FFFFFF');
-            if (this.style.gradientMode === 'split' && parsed.isGradient) {
-                this._renderSplitGradient(container, entry.text, parsed, this.style.fontText);
+            if (this.style.gradientMode === 'split') {
+                const parsed = this._parseColorArg(entry.colorRaw || '#FFFFFF');
+                if (parsed.isGradient) {
+                    this._renderSplitGradient(msgSpan, entry.text, parsed, this.style.fontText);
+                } else {
+                    msgSpan.textContent = entry.text;
+                    msgSpan.style.fontFamily = this.style.fontText; 
+                    msgSpan.style.display = 'inline';
+                    this._applyInlineTextColor(msgSpan, entry.colorRaw || '#FFFFFF');
+                }
             } else {
-                const msgSpan = document.createElement('span');
                 msgSpan.textContent = entry.text;
                 msgSpan.style.fontFamily = this.style.fontText; 
                 msgSpan.style.display = 'inline';
                 this._applyInlineTextColor(msgSpan, entry.colorRaw || '#FFFFFF');
-                container.appendChild(msgSpan);
             }
         }
       }
