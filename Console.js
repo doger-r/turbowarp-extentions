@@ -2,12 +2,11 @@
   'use strict';
 
   /**
-   * Console Extension v7.7 (Modified)
+   * Console Extension v8.1 (Alignment & Independent Spacing)
    * * Changes:
-   * - Removed Scrollbar blocks and logic.
-   * - Added block to set console/input padding.
-   * - Fixed console overlay padding to allow log area to be full-width.
-   * - Padding value now used in input height calculation.
+   * - Added selector to 'set line spacing' (Console vs Input).
+   * - Console container shifted up (-3px) to match Input baseline.
+   * - Strict line-height logic: 1.0 spacing means height equals font-size exactly.
    */
 
   const BlockType = (Scratch && Scratch.BlockType) ? Scratch.BlockType : {
@@ -69,7 +68,10 @@
         sizeInput: 1,
         textAlign: 'left',
         inputAlign: 'left',
-        lineSpacing: 1.4,
+        // Split Spacing
+        consoleLineSpacing: 1.0, 
+        inputLineSpacing: 1.5,
+        
         minInputHeightPct: 10,  
         maxInputHeightPct: 40, 
         consoleWrapping: 'wrap', 
@@ -85,7 +87,6 @@
       };
       this.style = Object.assign({}, this._defaults);
 
-      this.lineSpacing = this._defaults.lineSpacing;
       this.logInputEnabled = true;
       this.textSelectable = true;
 
@@ -120,8 +121,8 @@
         'whenInput','getLastInput','getCurrentInput','isInputShown',
         'setAutocorrect', 'getSelectionPosition', 'setInputPosition', 'setEnterBehavior',
         'addCommand', 'removeCommand', 'clearCommands',
-        'setColorPicker','gradientReporter','gradient3Reporter','gradient4Reporter','setFont','setTextSizeMultiplier','setAlignment','setLineSpacing',
-        // --- setPadding ---
+        'setColorPicker','gradientReporter','gradient3Reporter','gradient4Reporter','setFont','setTextSizeMultiplier','setAlignment',
+        'setLineSpacing', // Updated method
         'setPadding',
         'setInputPlaceholder','setInputHeightRange','setTextWrapping',
         'setTextStyle', 'setGradientMode', 
@@ -212,9 +213,9 @@
           { opcode: 'setAlignment', blockType: BlockType.COMMAND, text: 'set [PART] alignment to [ALIGN]', arguments: { PART: { type: ArgumentType.STRING, menu: 'alignmentParts', defaultValue: 'text' }, ALIGN: { type: ArgumentType.STRING, menu: 'alignmentMenu', defaultValue: 'left' } } },
           { opcode: 'setTextWrapping', blockType: BlockType.COMMAND, text: 'set [PART] text wrapping to [MODE]', arguments: { PART: { type: ArgumentType.STRING, menu: 'wrappingParts', defaultValue: 'console' }, MODE: { type: ArgumentType.STRING, menu: 'wrappingMode', defaultValue: 'wrap' } } },
 
-          { opcode: 'setLineSpacing', blockType: BlockType.COMMAND, text: 'set line spacing to [SPACING]', arguments: { SPACING: { type: ArgumentType.NUMBER, defaultValue: 1.4 } } },
+          // --- Updated setLineSpacing block ---
+          { opcode: 'setLineSpacing', blockType: BlockType.COMMAND, text: 'set [PART] line spacing to [SPACING]', arguments: { PART: { type: ArgumentType.STRING, menu: 'wrappingParts', defaultValue: 'console' }, SPACING: { type: ArgumentType.NUMBER, defaultValue: 1.0 } } },
           
-          // --- setPadding block ---
           { opcode: 'setPadding', blockType: BlockType.COMMAND, text: 'set [PART] padding to [PADDING] px', arguments: { PART: { type: ArgumentType.STRING, menu: 'wrappingParts', defaultValue: 'console' }, PADDING: { type: ArgumentType.NUMBER, defaultValue: 10 } } },
 
           { opcode: 'setInputPlaceholder', blockType: BlockType.COMMAND, text: 'set input placeholder to [TEXT]', arguments: { TEXT: { type: ArgumentType.STRING, defaultValue: 'Type command...' } } },
@@ -254,7 +255,7 @@
         .console-scroller::-webkit-scrollbar { display: none; }
         .console-scroller::-webkit-scrollbar-corner { background: transparent; }
 
-        /* SCROLLBAR VISIBILITY (Retained for Internal Suggestions Box) */
+        /* SCROLLBAR VISIBILITY */
         .console-scroller.sb-show-y { 
             overflow-y: auto !important; 
             scrollbar-width: thin !important; 
@@ -310,6 +311,10 @@
           width: fit-content; 
           min-width: 100%;
           cursor: text;
+          margin: 0;
+          padding: 0;
+          /* Important: Ensure line height is strictly respected */
+          vertical-align: top;
         }
         .console-spacing { width: 100%; display: block; } 
 
@@ -479,7 +484,7 @@
       if (Date.now() - (this._lastUserScroll || 0) > this._userScrollGrace) this._applyCachedScroll();
     }
 
-    // ---- DYNAMIC SIZING LOGIC ----
+    // ---- DYNAMIC SIZING LOGIC (Separated Spacing) ----
     _resizeDynamicSizes () {
       const stageH = (typeof vm !== 'undefined' && vm && vm.runtime && vm.runtime.renderer && vm.runtime.renderer.canvas)
         ? vm.runtime.renderer.canvas.clientHeight
@@ -489,13 +494,31 @@
 
       this._computedTsPx = Math.max(0.1, base * scale * (this.style.sizeTimestamp || 1));
       this._computedInputPx = Math.max(0.1, base * scale * (this.style.sizeInput || 1));
+      
+      const conSpacing = this.style.consoleLineSpacing || 1.0;
+      const inpSpacing = this.style.inputLineSpacing || 1.5;
 
       if (this.logArea) {
+        this.logArea.style.padding = `${this.style.consolePadding}px`;
+        // --- Correction for Console alignment ---
+        // Shift up slightly (negative margin) to match Input baseline quirk
+        this.logArea.style.marginTop = '-3px'; 
+
         for (const line of Array.from(this.logArea.children)) {
           if (line.classList.contains('console-spacing')) continue; 
           
           const lineMult = line.dataset.sizeMult ? Number(line.dataset.sizeMult) : (this.style.sizeText || 1);
           const linePx = Math.max(0.1, base * scale * lineMult);
+
+          // STRICT CALCULATION: Font Size * Spacing
+          const dynamicLineHeight = linePx * conSpacing;
+          
+          line.style.lineHeight = `${dynamicLineHeight}px`;
+          line.style.fontSize = `${linePx}px`; 
+          
+          line.style.marginTop = '0px';
+          line.style.paddingBottom = '0px'; 
+          line.style.marginBottom = '0px';
 
           const spans = line.querySelectorAll('span');
           if (spans[0]) spans[0].style.fontSize = `${this._computedTsPx}px`;
@@ -511,7 +534,7 @@
             fontSize: `${this._computedInputPx}px`,
             fontFamily: this.style.fontInput,
             textAlign: this.style.inputAlign,
-            lineHeight: '1.5',
+            lineHeight: String(inpSpacing),
             letterSpacing: 'normal'
         };
         
@@ -548,19 +571,16 @@
         this.inputField.style.height = 'auto'; 
         
         const contentHeight = this.inputField.scrollHeight;
-
         const stageH = this.stage.clientHeight || 360;
         
-        // --- Use dynamic padding ---
         const wrapperPadding = this.style.inputPadding * 2;
-        
         const desiredWrapperHeight = contentHeight + wrapperPadding; 
         
         const maxPct = this.style.maxInputHeightPct || 40; 
         const minPct = this.style.minInputHeightPct || 10;
         const maxWrapperHeightPx = stageH * (maxPct / 100);
         
-        const minFontHeight = (this._computedInputPx || 14) * 1.5;
+        const minFontHeight = (this._computedInputPx || 14) * (this.style.inputLineSpacing || 1.5);
         const minWrapperHeightFromFont = minFontHeight + wrapperPadding;
         const minWrapperHeightFromPct = stageH * (minPct / 100);
         
@@ -613,9 +633,10 @@
         WebkitOverflowScrolling: 'touch',
         background: 'transparent',
         pointerEvents: 'auto',
-        // --- Apply padding and box-sizing ---
         padding: `${this.style.consolePadding}px`,
-        boxSizing: 'border-box'
+        boxSizing: 'border-box',
+        // --- Negative top margin to align text baseline with input text ---
+        marginTop: '-3px' 
       });
       
       this._applyConsoleWrappingToContainer(logArea, this.style.consoleWrapping);
@@ -1090,7 +1111,9 @@
 
       const container = document.createElement('div');
       container.className = 'console-line';
-      container.style.lineHeight = String(this.style.lineSpacing || this._defaults.lineSpacing);
+      // Initial spacing, will be overridden by dynamic resize for accuracy
+      const currentSpacing = this.style.consoleLineSpacing || 1.0;
+      container.style.lineHeight = String(currentSpacing);
 
       if (this.style.consoleWrapping === 'scroll') {
         container.style.whiteSpace = 'pre';
@@ -1857,8 +1880,15 @@
     }
 
     setLineSpacing (args) {
-      this.style.lineSpacing = Number(args.SPACING || this.style.lineSpacing) || this.style.lineSpacing;
-      if (this.logArea) for (const ch of Array.from(this.logArea.children)) ch.style.lineHeight = String(this.style.lineSpacing);
+      const part = String(args.PART || 'console').toLowerCase();
+      const val = Number(args.SPACING);
+      
+      if (part === 'input') {
+          this.style.inputLineSpacing = val;
+      } else {
+          this.style.consoleLineSpacing = val;
+      }
+      this._resizeDynamicSizes(); 
     }
 
     // --- setPadding function ---
@@ -1948,7 +1978,6 @@
       this._disconnectObserverAndLoop(); 
       this._timestampFormat = 'off';
       this._refreshTimestamps();
-      this.setLineSpacing({ SPACING: this.style.lineSpacing });
       // --- Reset padding ---
       this.setPadding({ PART: 'console', PADDING: this._defaults.consolePadding });
       this.setPadding({ PART: 'input', PADDING: this._defaults.inputPadding });
