@@ -2,11 +2,11 @@
   'use strict';
 
   /**
-   * Console Extension v8.4 (Fixes & Alignment)
+   * Console Extension v8.5 (Alignment Fix)
    * * Changes:
    * - Fixed timestamps being deleted when using JavaScript formatting.
    * - Fixed the first token (e.g. "let") inheriting timestamp size in JS mode.
-   * - Aligned Input text height to match Console text height (applied matching -6px offset).
+   * - Removed hardcoded negative margins (-6px) to ensure Console and Input text start at the exact same vertical position determined by padding.
    */
 
   const BlockType = (Scratch && Scratch.BlockType) ? Scratch.BlockType : {
@@ -501,8 +501,8 @@
       if (this.logArea) {
         this.logArea.style.padding = `${this.style.consolePadding}px`;
         // --- Correction for Console alignment ---
-        // Shift up slightly (negative margin) to match Input baseline quirk
-        this.logArea.style.marginTop = '-6px'; 
+        // Reset margin to ensure strict padding adherence
+        this.logArea.style.marginTop = '0px'; 
 
         for (const line of Array.from(this.logArea.children)) {
           if (line.classList.contains('console-spacing')) continue; 
@@ -545,9 +545,9 @@
         Object.assign(this.inputHighlight.style, props);
         
         // --- NEW ALIGNMENT FIX ---
-        // Apply the same negative top margin as the console to align text baselines
-        this.inputField.style.marginTop = '-6px';
-        this.inputHighlight.style.marginTop = '-6px';
+        // Reset margin to ensure strict padding adherence
+        this.inputField.style.marginTop = '0px';
+        this.inputHighlight.style.marginTop = '0px';
         
         this._updateInputHeight();
       }
@@ -643,8 +643,8 @@
         pointerEvents: 'auto',
         padding: `${this.style.consolePadding}px`,
         boxSizing: 'border-box',
-        // --- Negative top margin to align text baseline with input text ---
-        marginTop: '-6px' 
+        // --- Reset margin to 0 to ensure strict alignment with padding ---
+        marginTop: '0px' 
       });
       
       this._applyConsoleWrappingToContainer(logArea, this.style.consoleWrapping);
