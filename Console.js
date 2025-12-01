@@ -2,11 +2,11 @@
   'use strict';
 
   /**
-   * Console Extension v8.1 (Alignment & Independent Spacing)
+   * Console Extension v8.3 (Alignment Tweaks)
    * * Changes:
-   * - Added selector to 'set line spacing' (Console vs Input).
-   * - Console container shifted up (-3px) to match Input baseline.
-   * - Strict line-height logic: 1.0 spacing means height equals font-size exactly.
+   * - Adjusted default line spacing to 1.2 for both Console and Input.
+   * - Increased negative margin on Console container (-6px) to align items higher.
+   * - Unified line-height calculation (pixel-based) persists.
    */
 
   const BlockType = (Scratch && Scratch.BlockType) ? Scratch.BlockType : {
@@ -68,9 +68,9 @@
         sizeInput: 1,
         textAlign: 'left',
         inputAlign: 'left',
-        // Split Spacing
-        consoleLineSpacing: 1.0, 
-        inputLineSpacing: 1.5,
+        // Split Spacing - Updated defaults to 1.2
+        consoleLineSpacing: 1.2, 
+        inputLineSpacing: 1.2,
         
         minInputHeightPct: 10,  
         maxInputHeightPct: 40, 
@@ -122,7 +122,7 @@
         'setAutocorrect', 'getSelectionPosition', 'setInputPosition', 'setEnterBehavior',
         'addCommand', 'removeCommand', 'clearCommands',
         'setColorPicker','gradientReporter','gradient3Reporter','gradient4Reporter','setFont','setTextSizeMultiplier','setAlignment',
-        'setLineSpacing', // Updated method
+        'setLineSpacing', 
         'setPadding',
         'setInputPlaceholder','setInputHeightRange','setTextWrapping',
         'setTextStyle', 'setGradientMode', 
@@ -502,7 +502,7 @@
         this.logArea.style.padding = `${this.style.consolePadding}px`;
         // --- Correction for Console alignment ---
         // Shift up slightly (negative margin) to match Input baseline quirk
-        this.logArea.style.marginTop = '-3px'; 
+        this.logArea.style.marginTop = '-6px'; 
 
         for (const line of Array.from(this.logArea.children)) {
           if (line.classList.contains('console-spacing')) continue; 
@@ -530,11 +530,14 @@
       }
 
       if (this.inputField && this.inputHighlight) {
+        // MATCH CONSOLE LOGIC: Calculate strict pixel line height (FontSize * Spacing)
+        const dynamicInputLineHeight = this._computedInputPx * inpSpacing;
+        
         const props = {
             fontSize: `${this._computedInputPx}px`,
             fontFamily: this.style.fontInput,
             textAlign: this.style.inputAlign,
-            lineHeight: String(inpSpacing),
+            lineHeight: `${dynamicInputLineHeight}px`, // Explicit pixels, matching console logic
             letterSpacing: 'normal'
         };
         
@@ -636,7 +639,7 @@
         padding: `${this.style.consolePadding}px`,
         boxSizing: 'border-box',
         // --- Negative top margin to align text baseline with input text ---
-        marginTop: '-3px' 
+        marginTop: '-6px' 
       });
       
       this._applyConsoleWrappingToContainer(logArea, this.style.consoleWrapping);
