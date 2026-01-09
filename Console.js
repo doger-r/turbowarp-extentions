@@ -2,11 +2,12 @@
   'use strict';
 
   /**
-   * Console Extension v8.5 (Alignment Fix)
+   * Console Extension v8.6 (Resizing Support)
    * * Changes:
-   * - Fixed timestamps being deleted when using JavaScript formatting.
-   * - Fixed the first token (e.g. "let") inheriting timestamp size in JS mode.
-   * - Removed hardcoded negative margins (-6px) to ensure Console and Input text start at the exact same vertical position determined by padding.
+   * - Added blocks to set Console Region (x, y, width, height).
+   * - Added blocks to set Input Region (x, width).
+   * - Updated layout logic to respect custom regions.
+   * - Disabled automatic input padding correction when console is not full-screen/default.
    */
 
   const BlockType = (Scratch && Scratch.BlockType) ? Scratch.BlockType : {
@@ -83,7 +84,11 @@
         
         // --- Padding defaults ---
         consolePadding: 10,
-        inputPadding: 10
+        inputPadding: 10,
+
+        // --- Geometry Defaults (Percentages) ---
+        consoleRegion: { x: 0, y: 0, w: 100, h: 100 },
+        inputRegion: { x: 0, w: 100 }
       };
       this.style = Object.assign({}, this._defaults);
 
@@ -127,7 +132,9 @@
         'setInputPlaceholder','setInputHeightRange','setTextWrapping',
         'setTextStyle', 'setGradientMode', 
         'resetStyling',
-        'setScrollTo','getMaxScroll','getCurrentScroll','setAutoScroll','isAutoScroll'
+        'setScrollTo','getMaxScroll','getCurrentScroll','setAutoScroll','isAutoScroll',
+        // New methods
+        'setConsoleRegion', 'setInputRegion'
       ];
       for (const m of methods) if (typeof this[m] === 'function') this[m] = this[m].bind(this);
 
@@ -213,10 +220,13 @@
           { opcode: 'setAlignment', blockType: BlockType.COMMAND, text: 'set [PART] alignment to [ALIGN]', arguments: { PART: { type: ArgumentType.STRING, menu: 'alignmentParts', defaultValue: 'text' }, ALIGN: { type: ArgumentType.STRING, menu: 'alignmentMenu', defaultValue: 'left' } } },
           { opcode: 'setTextWrapping', blockType: BlockType.COMMAND, text: 'set [PART] text wrapping to [MODE]', arguments: { PART: { type: ArgumentType.STRING, menu: 'wrappingParts', defaultValue: 'console' }, MODE: { type: ArgumentType.STRING, menu: 'wrappingMode', defaultValue: 'wrap' } } },
 
-          // --- Updated setLineSpacing block ---
           { opcode: 'setLineSpacing', blockType: BlockType.COMMAND, text: 'set [PART] line spacing to [SPACING]', arguments: { PART: { type: ArgumentType.STRING, menu: 'wrappingParts', defaultValue: 'console' }, SPACING: { type: ArgumentType.NUMBER, defaultValue: 1.0 } } },
           
           { opcode: 'setPadding', blockType: BlockType.COMMAND, text: 'set [PART] padding to [PADDING] px', arguments: { PART: { type: ArgumentType.STRING, menu: 'wrappingParts', defaultValue: 'console' }, PADDING: { type: ArgumentType.NUMBER, defaultValue: 10 } } },
+
+          // --- New Geometry Blocks ---
+          { opcode: 'setConsoleRegion', blockType: BlockType.COMMAND, text: 'set console region x [X]% y [Y]% width [W]% height [H]%', arguments: { X: { type: ArgumentType.NUMBER, defaultValue: 0 }, Y: { type: ArgumentType.NUMBER, defaultValue: 0 }, W: { type: ArgumentType.NUMBER, defaultValue: 100 }, H: { type: ArgumentType.NUMBER, defaultValue: 100 } } },
+          { opcode: 'setInputRegion', blockType: BlockType.COMMAND, text: 'set input region x [X]% width [W]%', arguments: { X: { type: ArgumentType.NUMBER, defaultValue: 0 }, W: { type: ArgumentType.NUMBER, defaultValue: 100 } } },
 
           { opcode: 'setInputPlaceholder', blockType: BlockType.COMMAND, text: 'set input placeholder to [TEXT]', arguments: { TEXT: { type: ArgumentType.STRING, defaultValue: 'Type command...' } } },
           { opcode: 'setInputHeightRange', blockType: BlockType.COMMAND, text: 'set input height min [MIN]% max [MAX]%', arguments: { MIN: { type: ArgumentType.NUMBER, defaultValue: 10 }, MAX: { type: ArgumentType.NUMBER, defaultValue: 40 } } },
@@ -486,6 +496,25 @@
 
     // ---- DYNAMIC SIZING LOGIC (Separated Spacing) ----
     _resizeDynamicSizes () {
+      // --- Apply Custom Geometry First ---
+      if (this.consoleOverlay) {
+          const r = this.style.consoleRegion;
+          this.consoleOverlay.style.left = `${r.x}%`;
+          this.consoleOverlay.style.top = `${r.y}%`;
+          this.consoleOverlay.style.width = `${r.w}%`;
+          this.consoleOverlay.style.height = `${r.h}%`;
+          this.consoleOverlay.style.right = 'auto';
+          this.consoleOverlay.style.bottom = 'auto';
+      }
+      
+      if (this.inputOverlay) {
+          const r = this.style.inputRegion;
+          this.inputOverlay.style.left = `${r.x}%`;
+          this.inputOverlay.style.width = `${r.w}%`;
+          this.inputOverlay.style.right = 'auto';
+          // Top/bottom are handled by _createInput and updated via _updateInputHeight logic
+      }
+
       const stageH = (typeof vm !== 'undefined' && vm && vm.runtime && vm.runtime.renderer && vm.runtime.renderer.canvas)
         ? vm.runtime.renderer.canvas.clientHeight
         : 360;
@@ -557,7 +586,10 @@
       }
 
       if (this.consoleOverlay) {
-          if (this.inputField && this.inputVisible) {
+          // Heuristic: Only apply auto-padding if console is full height and at origin.
+          const useAutoPadding = (this.style.consoleRegion.h >= 100 && this.style.consoleRegion.y === 0);
+
+          if (this.inputField && this.inputVisible && useAutoPadding) {
               const inputHt = this.inputWrapper ? this.inputWrapper.offsetHeight : (this._computedInputPx + 36);
               if (this.style.inputPosition === 'top') {
                   this.consoleOverlay.style.paddingTop = `${inputHt}px`;
@@ -602,14 +634,20 @@
         this.inputWrapper.style.height = `${clampedWrapperHeight}px`;
         this.inputField.style.height = '100%'; 
 
-        if (this.consoleOverlay && this.inputVisible) {
-            if (this.style.inputPosition === 'top') {
-                this.consoleOverlay.style.paddingTop = `${clampedWrapperHeight}px`;
-                this.consoleOverlay.style.paddingBottom = '';
-            } else {
-                this.consoleOverlay.style.paddingTop = '';
-                this.consoleOverlay.style.paddingBottom = `${clampedWrapperHeight}px`;
-            }
+        // Apply padding changes to console if needed (and if allowed)
+        if (this.consoleOverlay) {
+             // Re-trigger dynamic resize to update console padding based on new height
+             // But we need to avoid infinite loop. Just set the padding here if valid.
+             const useAutoPadding = (this.style.consoleRegion.h >= 100 && this.style.consoleRegion.y === 0);
+             if (this.inputVisible && useAutoPadding) {
+                if (this.style.inputPosition === 'top') {
+                    this.consoleOverlay.style.paddingTop = `${clampedWrapperHeight}px`;
+                    this.consoleOverlay.style.paddingBottom = '';
+                } else {
+                    this.consoleOverlay.style.paddingTop = '';
+                    this.consoleOverlay.style.paddingBottom = `${clampedWrapperHeight}px`;
+                }
+             }
         }
     }
 
@@ -620,9 +658,11 @@
 
       const overlay = document.createElement('div');
       overlay.className = 'consoleOverlay';
+      // Initial styles - note that _resizeDynamicSizes will override geometry
       Object.assign(overlay.style, {
         position: 'absolute',
-        top: '0', left: '0', right: '0', bottom: '0',
+        top: '0', left: '0', 
+        // Do not set right/bottom strictly here, let dynamic sizes handle it
         display: 'flex', flexDirection: 'column',
         zIndex: '50', 
         padding: '0',
@@ -669,14 +709,15 @@
       if (this.inputOverlay && this.stage.contains(this.inputOverlay)) return;
 
       const overlay = document.createElement('div');
+      // Position handled partly here (top/bottom) and partly in _resizeDynamicSizes (left/width)
       if (this.style.inputPosition === 'top') {
           Object.assign(overlay.style, { 
-              position: 'absolute', left: '0', right: '0', top: '0', bottom: 'auto', 
+              position: 'absolute', left: '0', top: '0', bottom: 'auto', 
               zIndex: '60', boxSizing: 'border-box', display: 'block' 
           });
       } else {
           Object.assign(overlay.style, { 
-              position: 'absolute', left: '0', right: '0', bottom: '0', top: 'auto',
+              position: 'absolute', left: '0', bottom: '0', top: 'auto',
               zIndex: '60', boxSizing: 'border-box', display: 'block' 
           });
       }
@@ -1936,6 +1977,25 @@
         }
     }
 
+    // --- New Geometry Methods ---
+    setConsoleRegion(args) {
+        this.style.consoleRegion = {
+            x: Number(args.X) || 0,
+            y: Number(args.Y) || 0,
+            w: Number(args.W) || 0,
+            h: Number(args.H) || 0
+        };
+        this._resizeDynamicSizes();
+    }
+
+    setInputRegion(args) {
+        this.style.inputRegion = {
+            x: Number(args.X) || 0,
+            w: Number(args.W) || 0
+        };
+        this._resizeDynamicSizes();
+    }
+
     setInputPlaceholder (args) {
       const txt = String(args.TEXT || '');
       this.style.inputPlaceholder = txt;
@@ -1994,6 +2054,10 @@
 
     resetStyling () {
       this.style = Object.assign({}, this._defaults);
+      // Ensure defaults for nested objects (Object.assign is shallow)
+      this.style.consoleRegion = { ...this._defaults.consoleRegion };
+      this.style.inputRegion = { ...this._defaults.inputRegion };
+
       this._disconnectObserverAndLoop(); 
       this._timestampFormat = 'off';
       this._refreshTimestamps();
